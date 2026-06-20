@@ -182,7 +182,7 @@ export default function Dashboard() {
   const [lastVisitText, setLastVisitText] = useState<string>("");
 
   useEffect(() => {
-    if (typeof window !== "undefined" && sessionStorage.getItem("cb_dash_unlocked") === "1") {
+    if (typeof window !== "undefined" && sessionStorage.getItem("amudar_dash_unlocked") === "1") {
       setUnlocked(true);
     }
   }, []);
@@ -211,7 +211,7 @@ export default function Dashboard() {
       if (m.error) throw new Error(m.error);
 
       // Compute diff vs previous snapshot
-      const snapRaw = localStorage.getItem("cb_dash_snapshot");
+      const snapRaw = localStorage.getItem("amudar_dash_snapshot");
       if (snapRaw) {
         try {
           const prev = JSON.parse(snapRaw);
@@ -227,7 +227,7 @@ export default function Dashboard() {
       setMeta(m);
       setRefreshedAt(new Date());
       // Save new snapshot for next comparison
-      localStorage.setItem("cb_dash_snapshot", JSON.stringify({
+      localStorage.setItem("amudar_dash_snapshot", JSON.stringify({
         savedAt: new Date().toISOString(),
         campaignStatuses: m.campaignStatuses,
         adsets: m.adsets.map((a: { name: string; spend: number; leads: number; cpl: number | null }) =>
@@ -251,8 +251,8 @@ export default function Dashboard() {
   }
 
   function tryUnlock() {
-    if (pw === (process.env.NEXT_PUBLIC_DASHBOARD_PASSWORD || "closets2026")) {
-      sessionStorage.setItem("cb_dash_unlocked", "1");
+    if (pw === (process.env.NEXT_PUBLIC_DASHBOARD_PASSWORD || "amudar")) {
+      sessionStorage.setItem("amudar_dash_unlocked", "1");
       setUnlocked(true);
     } else {
       setPwErr("Contraseña incorrecta");
@@ -263,7 +263,7 @@ export default function Dashboard() {
     return (
       <div className="fixed inset-0 bg-[#0C1015] flex items-center justify-center p-6 z-50">
         <div className="bg-white rounded-xl p-12 max-w-md w-full text-center shadow-2xl">
-          <div className="text-xs uppercase tracking-widest text-[#ff6900] font-semibold mb-3">Closets &amp; Blinds FL</div>
+          <div className="text-xs uppercase tracking-widest text-[#ff6900] font-semibold mb-3">A-mudar</div>
           <h2 className="font-serif text-2xl text-[#0C1015] font-normal mb-2">Acceso al Dashboard</h2>
           <p className="text-slate-600 text-sm mb-6">Ingrese la contraseña para ver el reporte</p>
           <input type="password" value={pw} onChange={(e) => setPw(e.target.value)}
@@ -338,7 +338,7 @@ export default function Dashboard() {
           <button onClick={() => loadAll(true)} disabled={refreshing}
             className="w-full mt-2 px-3 py-2 bg-[#ff6900] text-white rounded font-semibold text-[11px] uppercase tracking-widest hover:bg-[#cc5400] transition disabled:opacity-60 inline-flex items-center justify-center gap-2">
             <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
-            {refreshing ? "Actualizando..." : "Refresh"}
+            {refreshing ? "Actualizando..." : "Actualizar"}
           </button>
         </div>
       </aside>
@@ -452,7 +452,7 @@ function SectionResumen({ meta, cmp, cplChange, isCrisis }: { meta: MetaData; cm
   const t = meta.totals30d;
   return (
     <div className="space-y-6">
-      {/* Hero KPIs — los 3 que más le importan a Diego */}
+      {/* Hero KPIs */}
       <div className="grid grid-cols-3 max-md:grid-cols-1 gap-4">
         <HeroKPI label={`Costo por Lead · promedio ${meta.rangeDays}d`} value={fmtCurrDec(t.cpl)}
           sub={`Últimos 7 días: ${fmtCurrDec(cmp.cpl_now)} (vs ${fmtCurrDec(cmp.cpl_prev)} previos · ${cplChange > 0 ? "+" : ""}${cplChange.toFixed(0)}%)`}
@@ -1122,7 +1122,7 @@ function GoogleView({ data, activeSection }: { data: GoogleData; activeSection: 
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-200 bg-slate-50">
                 <th className="px-4 py-3">Campaña</th>
                 <th className="px-4 py-3">Estado</th>
-                <th className="px-4 py-3 text-right">Spend</th>
+                <th className="px-4 py-3 text-right">Inversión</th>
                 <th className="px-4 py-3 text-right">Conversiones</th>
                 <th className="px-4 py-3 text-right">CPA</th>
                 <th className="px-4 py-3 text-right">CTR</th>
@@ -1155,7 +1155,7 @@ function GoogleView({ data, activeSection }: { data: GoogleData; activeSection: 
     return (
       <div className="space-y-6">
         <div className="bg-white border border-slate-200 rounded-lg p-5">
-          <h3 className="font-serif text-lg mb-4">Spend + Conversiones por día</h3>
+          <h3 className="font-serif text-lg mb-4">Inversión + Conversiones por día</h3>
           <div className="space-y-1">
             {data.daily.slice(-14).map((d, i) => {
               const pct = (d.spend / max) * 100;
@@ -1181,10 +1181,9 @@ function GoogleView({ data, activeSection }: { data: GoogleData; activeSection: 
 
 function shortName(campaign: string): string {
   const map: Record<string, string> = {
-    "OUTCOME_LEADS_IDDENTIFY - Only Forms V2": "Lead Form V2",
-    "FORM_Blinds_Ingles": "Blinds EN",
-    "Ventas_InstaSwitch_Español - NEW": "InstaSwitch ES",
-    "REMARKETING PROMOCION 15 + 40": "Remarketing",
+    "Amudar Lead Gen Q2": "Lead Gen Q2",
+    "Search - ACQ - a-MUDAR - MaxC - CO": "Search ACQ MaxC",
+    "Pmax-Amudar-Out of city-CO": "Pmax Out of city",
   };
   if (map[campaign]) return map[campaign];
   return campaign.length > 20 ? campaign.slice(0, 18) + "…" : campaign;
