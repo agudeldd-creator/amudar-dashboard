@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-dm-sans);
+  --font-serif: var(--font-inter-tight);
+}
+
+body {
+  background: #F8FAFC;
+  color: #0F172A;
+  font-family: var(--font-dm-sans), -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
