@@ -12,23 +12,32 @@ type MetaData = {
   period: { start: string; end: string };
   totals30d: {
     spend: number; impressions: number; reach_daily_sum: number;
-    leads: number; clicks: number; ctr: number; cpl: number; cpm: number;
+    leads: number; messages: number; replies: number;
+    clicks: number; ctr: number; cpl: number; cpMessage: number; cpm: number;
   };
   monthOverMonth: {
-    current: { label: string; spend: number; impressions: number; leads: number; cpl: number };
-    prior: { label: string; spend: number; impressions: number; leads: number; cpl: number };
-    deltas: { spend: number; impressions: number; leads: number; cpl: number };
+    current: { label: string; spend: number; impressions: number; leads: number; messages: number; cpl: number; cpMessage: number };
+    prior: { label: string; spend: number; impressions: number; leads: number; messages: number; cpl: number; cpMessage: number };
+    deltas: { spend: number; impressions: number; leads: number; messages: number; cpl: number; cpMessage: number };
   };
   last7vsPrev7: {
     spend: { now: number; prev: number; pct: number };
     leads: { now: number; prev: number; pct: number };
+    messages: { now: number; prev: number; pct: number };
     impressions: { now: number; prev: number; pct: number };
     cpl_now: number; cpl_prev: number;
+    cpMessage_now: number; cpMessage_prev: number;
   };
-  campaignBreakdown30d: { name: string; spend: number; impressions: number; leads: number; cpl: number | null }[];
-  daily: { date: string; spend: number; impressions: number; reach: number; clicks: number; link_clicks: number; leads: number }[];
-  adsets: { campaign: string; name: string; spend: number; impressions: number; reach: number; frequency: number; clicks: number; link_clicks: number; leads: number; ctr: number; cpc: number; cpl: number | null }[];
-  topAds: { name: string; adset: string; spend: number; impressions: number; clicks: number; link_clicks: number; leads: number; ctr: number; cpc: number; cpl: number | null }[];
+  weekOverWeek: {
+    weeks: { weekStart: string; spend: number; messages: number; leads: number }[];
+    latestMessages: number;
+    previousMessages: number;
+    growthPct: number;
+  };
+  campaignBreakdown30d: { name: string; spend: number; impressions: number; leads: number; messages: number; replies: number; cpl: number | null; cpm_msg: number | null }[];
+  daily: { date: string; spend: number; impressions: number; reach: number; clicks: number; link_clicks: number; leads: number; messages: number; replies: number }[];
+  adsets: { campaign: string; name: string; spend: number; impressions: number; reach: number; frequency: number; clicks: number; link_clicks: number; leads: number; messages: number; replies: number; ctr: number; cpc: number; cpl: number | null; cpm_msg: number | null }[];
+  topAds: { name: string; adset: string; spend: number; impressions: number; clicks: number; link_clicks: number; leads: number; messages: number; ctr: number; cpc: number; cpl: number | null }[];
   activeCampaigns: string[];
   campaignStatuses: CampaignStatus[];
   dailyLeadsByCampaign: { date: string; total: number; byCampaign: Record<string, number> }[];
@@ -44,7 +53,9 @@ type MetaData = {
 };
 
 type AdsetAudit = {
-  campaign: string; name: string; cpl: number | null; leads: number; spend: number;
+  campaign: string; name: string;
+  cpl: number | null; cpMessage: number | null;
+  leads: number; messages: number; replies: number; spend: number;
   dailyBudget: number; monthlyBudget: number;
   category: "winner" | "borderline" | "loser" | "learning"; effectiveStatus: string;
 };
@@ -261,15 +272,15 @@ export default function Dashboard() {
 
   if (!unlocked) {
     return (
-      <div className="fixed inset-0 bg-[#0C1015] flex items-center justify-center p-6 z-50">
+      <div className="fixed inset-0 bg-[#002855] flex items-center justify-center p-6 z-50">
         <div className="bg-white rounded-xl p-12 max-w-md w-full text-center shadow-2xl">
-          <div className="text-xs uppercase tracking-widest text-[#ff6900] font-semibold mb-3">A-mudar</div>
-          <h2 className="font-serif text-2xl text-[#0C1015] font-normal mb-2">Acceso al Dashboard</h2>
+          <div className="text-xs uppercase tracking-widest text-[#2A6FBC] font-semibold mb-3">A-mudar</div>
+          <h2 className="font-serif text-2xl text-[#002855] font-normal mb-2">Acceso al Dashboard</h2>
           <p className="text-slate-600 text-sm mb-6">Ingrese la contraseña para ver el reporte</p>
           <input type="password" value={pw} onChange={(e) => setPw(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && tryUnlock()} placeholder="Contraseña"
-            className="w-full p-4 border border-slate-200 rounded-lg text-base text-center mb-4 outline-none focus:border-[#ff6900]" autoFocus />
-          <button onClick={tryUnlock} className="w-full p-4 bg-[#0C1015] text-white rounded-lg font-semibold text-sm uppercase tracking-widest hover:bg-[#ff6900] transition">Entrar</button>
+            className="w-full p-4 border border-slate-200 rounded-lg text-base text-center mb-4 outline-none focus:border-[#2A6FBC]" autoFocus />
+          <button onClick={tryUnlock} className="w-full p-4 bg-[#002855] text-white rounded-lg font-semibold text-sm uppercase tracking-widest hover:bg-[#2A6FBC] transition">Entrar</button>
           <div className="text-red-600 text-sm mt-3 min-h-[18px]">{pwErr}</div>
         </div>
       </div>
@@ -277,7 +288,7 @@ export default function Dashboard() {
   }
 
   if (loading) return <div className="p-20 text-center text-slate-500">Cargando datos en vivo de Meta Ads...</div>;
-  if (error) return <div className="p-20 text-center"><div className="text-red-600 font-semibold">Error: {error}</div><button onClick={() => loadAll(true)} className="mt-4 px-4 py-2 bg-[#0C1015] text-white rounded">Reintentar</button></div>;
+  if (error) return <div className="p-20 text-center"><div className="text-red-600 font-semibold">Error: {error}</div><button onClick={() => loadAll(true)} className="mt-4 px-4 py-2 bg-[#002855] text-white rounded">Reintentar</button></div>;
   if (!meta) return null;
 
   const t = meta.totals30d;
@@ -285,7 +296,9 @@ export default function Dashboard() {
   const cplChange = cmp.cpl_prev ? ((cmp.cpl_now - cmp.cpl_prev) / cmp.cpl_prev) * 100 : 0;
   const cr = meta.creativeRefresh;
   // Suppress fatigue warning if creatives were refreshed in last 7 days (still gathering data)
-  const isCrisis = (cplChange > 50 || cmp.leads.pct < -40) && !cr?.isTestingNew;
+  // Crisis: cost per WhatsApp message doubled OR conversations dropped >40% — not based on form leads
+  const cpMsgChange = cmp.cpMessage_prev > 0 ? ((cmp.cpMessage_now - cmp.cpMessage_prev) / cmp.cpMessage_prev) * 100 : 0;
+  const isCrisis = (cpMsgChange > 50 || cmp.messages.pct < -40) && !cr?.isTestingNew;
   const isTestingPhase = !!cr?.isTestingNew;
 
   return (
@@ -297,15 +310,15 @@ export default function Dashboard() {
         </div>
       )}
       {refreshing && (
-        <div className="fixed top-0 left-0 right-0 z-40 bg-[#ff6900] text-white text-center text-xs py-1.5 font-semibold tracking-wider uppercase">
+        <div className="fixed top-0 left-0 right-0 z-40 bg-[#2A6FBC] text-white text-center text-xs py-1.5 font-semibold tracking-wider uppercase">
           Actualizando datos en vivo...
         </div>
       )}
 
       {/* SIDEBAR */}
-      <aside className={`bg-[#0C1015] text-white w-64 flex-shrink-0 sticky top-0 h-screen overflow-y-auto p-5 flex flex-col z-30 max-lg:fixed max-lg:transition-transform ${mobileMenuOpen ? "max-lg:translate-x-0" : "max-lg:-translate-x-full"}`}>
+      <aside className={`bg-[#002855] text-white w-64 flex-shrink-0 sticky top-0 h-screen overflow-y-auto p-5 flex flex-col z-30 max-lg:fixed max-lg:transition-transform ${mobileMenuOpen ? "max-lg:translate-x-0" : "max-lg:-translate-x-full"}`}>
         <div className="mb-5">
-          <div className="text-[10px] uppercase tracking-widest text-[#ff6900] font-semibold mb-1">A-mudar</div>
+          <div className="text-[10px] uppercase tracking-widest text-[#2A6FBC] font-semibold mb-1">A-mudar</div>
           <h1 className="font-serif text-xl text-white leading-tight">Ads Dashboard</h1>
         </div>
 
@@ -313,7 +326,7 @@ export default function Dashboard() {
         <div className="mb-5 grid grid-cols-2 gap-1 bg-white/5 p-1 rounded-md border border-white/10">
           {(["meta", "google"] as const).map((p) => (
             <button key={p} onClick={() => setPlatform(p)}
-              className={`px-2 py-1.5 rounded text-[11px] font-semibold uppercase tracking-wider transition ${platform === p ? "bg-[#ff6900] text-white" : "text-slate-300 hover:bg-white/5"}`}>
+              className={`px-2 py-1.5 rounded text-[11px] font-semibold uppercase tracking-wider transition ${platform === p ? "bg-[#2A6FBC] text-white" : "text-slate-300 hover:bg-white/5"}`}>
               {p === "meta" ? "Meta" : "Google"}
             </button>
           ))}
@@ -325,7 +338,7 @@ export default function Dashboard() {
             const isActiveSection = activeSection === s.id;
             return (
               <button key={s.id} onClick={() => { setActiveSection(s.id); setMobileMenuOpen(false); }}
-                className={`w-full text-left px-3 py-2.5 rounded-md text-sm font-medium transition flex items-center gap-3 ${isActiveSection ? "bg-[#ff6900] text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}>
+                className={`w-full text-left px-3 py-2.5 rounded-md text-sm font-medium transition flex items-center gap-3 ${isActiveSection ? "bg-[#2A6FBC] text-white" : "text-slate-300 hover:bg-white/5 hover:text-white"}`}>
                 <Icon size={18} strokeWidth={isActiveSection ? 2.25 : 1.75} />
                 <span>{s.label}</span>
                 {platform === "meta" && s.id === "recomendaciones" && isCrisis && <span className="ml-auto w-2 h-2 bg-amber-400 rounded-full animate-pulse"></span>}
@@ -336,7 +349,7 @@ export default function Dashboard() {
         <div className="pt-5 mt-5 border-t border-white/10 text-[11px] text-slate-400 leading-relaxed">
           <div className="mb-2">Última actualización:<br /><span className="text-white">{(refreshedAt || new Date(meta.lastUpdated)).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span></div>
           <button onClick={() => loadAll(true)} disabled={refreshing}
-            className="w-full mt-2 px-3 py-2 bg-[#ff6900] text-white rounded font-semibold text-[11px] uppercase tracking-widest hover:bg-[#cc5400] transition disabled:opacity-60 inline-flex items-center justify-center gap-2">
+            className="w-full mt-2 px-3 py-2 bg-[#2A6FBC] text-white rounded font-semibold text-[11px] uppercase tracking-widest hover:bg-[#1A4D89] transition disabled:opacity-60 inline-flex items-center justify-center gap-2">
             <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} />
             {refreshing ? "Actualizando..." : "Actualizar"}
           </button>
@@ -346,20 +359,20 @@ export default function Dashboard() {
       {/* MAIN */}
       <main className="flex-1 min-w-0 p-8 max-md:p-5 pb-16 max-w-[1200px]">
         {/* Mobile menu toggle */}
-        <button onClick={() => setMobileMenuOpen(true)} className="lg:hidden mb-4 px-3 py-2 bg-[#0C1015] text-white rounded text-sm font-semibold inline-flex items-center gap-2">
+        <button onClick={() => setMobileMenuOpen(true)} className="lg:hidden mb-4 px-3 py-2 bg-[#002855] text-white rounded text-sm font-semibold inline-flex items-center gap-2">
           <Menu size={16} /> Menú
         </button>
 
         {/* Top bar: range selector */}
         <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
           <div>
-            <h2 className="font-serif text-2xl text-[#0C1015]">{SECTIONS.find(s => s.id === activeSection)?.label}</h2>
+            <h2 className="font-serif text-2xl text-[#002855]">{SECTIONS.find(s => s.id === activeSection)?.label}</h2>
             <p className="text-xs text-slate-500 uppercase tracking-widest mt-0.5">Rango: últimos {rangeDays} días</p>
           </div>
           <div className="inline-flex border border-slate-300 rounded-md overflow-hidden">
             {[30, 60, 90].map((d) => (
               <button key={d} onClick={() => setRangeDays(d as 30 | 60 | 90)}
-                className={`px-3 py-2 text-xs font-semibold uppercase tracking-widest transition ${rangeDays === d ? "bg-[#0C1015] text-white" : "bg-white text-slate-700 hover:bg-slate-100"}`}>
+                className={`px-3 py-2 text-xs font-semibold uppercase tracking-widest transition ${rangeDays === d ? "bg-[#002855] text-white" : "bg-white text-slate-700 hover:bg-slate-100"}`}>
                 {d}d
               </button>
             ))}
@@ -381,7 +394,7 @@ export default function Dashboard() {
           <div className="bg-amber-50 border border-amber-200 border-l-4 border-l-amber-500 rounded-lg p-4 mb-6 text-sm flex items-start gap-3">
             <AlertTriangle size={20} className="text-amber-600 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
-              <strong className="text-amber-800">Aviso:</strong> esta semana el CPL ha subido <strong>{cplChange.toFixed(0)}%</strong>, consistente con fatiga creativa después de varias semanas con los mismos anuncios. Es parte normal del ciclo — recomendamos refrescar creatividad.
+              <strong className="text-amber-800">Aviso:</strong> esta semana el costo por conversación de WhatsApp ha subido <strong>{cpMsgChange.toFixed(0)}%</strong>, consistente con fatiga creativa después de varias semanas con los mismos anuncios. Es parte normal del ciclo — recomendamos refrescar creatividad.
               <button onClick={() => setActiveSection("recomendaciones")} className="text-amber-800 font-semibold underline ml-2 inline-flex items-center gap-1">
                 Ver acciones recomendadas <ChevronRight size={14} />
               </button>
@@ -433,11 +446,11 @@ export default function Dashboard() {
         <div className="bg-slate-100 border border-slate-200 rounded-lg p-4 mt-8 text-xs text-slate-600 leading-relaxed">
           {platform === "meta" ? (
             <>
-              <strong className="text-[#0C1015]">Fuente:</strong> Meta Ads (Windsor.ai REST API, cuenta {process.env.NEXT_PUBLIC_META_ACCOUNT_ID || "2237520487071255"}) · Métrica de leads: <code className="bg-white px-1 rounded">actions_lead</code> (formulario completado en Facebook). <strong>NO equivale a leads atendidos por el equipo.</strong>
+              <strong className="text-[#002855]">Fuente:</strong> Meta Ads (Windsor.ai REST API, cuenta {process.env.NEXT_PUBLIC_META_ACCOUNT_ID || "2237520487071255"}) · Métrica de leads: <code className="bg-white px-1 rounded">actions_lead</code> (formulario completado en Facebook). <strong>NO equivale a leads atendidos por el equipo.</strong>
             </>
           ) : (
             <>
-              <strong className="text-[#0C1015]">Fuente:</strong> Google Ads (Windsor.ai REST API, cuenta 464-415-2268) · Métrica de conversiones: nativa de Google Ads (form submit / call / etc., depende de cómo esté configurado el goal).
+              <strong className="text-[#002855]">Fuente:</strong> Google Ads (Windsor.ai REST API, cuenta 464-415-2268) · Métrica de conversiones: nativa de Google Ads (form submit / call / etc., depende de cómo esté configurado el goal).
             </>
           )}
         </div>
@@ -450,36 +463,80 @@ export default function Dashboard() {
 
 function SectionResumen({ meta, cmp, cplChange, isCrisis }: { meta: MetaData; cmp: MetaData["last7vsPrev7"]; cplChange: number; isCrisis: boolean }) {
   const t = meta.totals30d;
+  const msgChange = cmp.messages.prev > 0 ? ((cmp.messages.now - cmp.messages.prev) / cmp.messages.prev) * 100 : 0;
   return (
     <div className="space-y-6">
-      {/* Hero KPIs */}
+      {/* Hero KPIs — WhatsApp first (Amudar's primary conversion) */}
       <div className="grid grid-cols-3 max-md:grid-cols-1 gap-4">
-        <HeroKPI label={`Costo por Lead · promedio ${meta.rangeDays}d`} value={fmtCurrDec(t.cpl)}
-          sub={`Últimos 7 días: ${fmtCurrDec(cmp.cpl_now)} (vs ${fmtCurrDec(cmp.cpl_prev)} previos · ${cplChange > 0 ? "+" : ""}${cplChange.toFixed(0)}%)`}
-          accent={isCrisis ? "red" : "gold"} />
+        <HeroKPI label={`Conversaciones WhatsApp · ${meta.rangeDays}d`} value={fmtNum(t.messages)} delta={msgChange}
+          sub={`Últimos 7 días: ${cmp.messages.now} (vs ${cmp.messages.prev} previos)`}
+          accent="gold" />
+        <HeroKPI label={`Costo por Conversación · ${meta.rangeDays}d`} value={fmtCurr(t.cpMessage)} lowerBetter
+          sub={`Últimos 7 días: ${fmtCurr(cmp.cpMessage_now)} (vs ${fmtCurr(cmp.cpMessage_prev)} previos)`}
+          accent="dark" />
         <HeroKPI label={`Inversión ${meta.rangeDays}d`} value={fmtCurr(t.spend)}
-          sub={`promedio $${Math.round(t.spend / meta.rangeDays)}/día`} accent="dark" />
-        <HeroKPI label="Formularios Meta" value={fmtNum(t.leads)} delta={cmp.leads.pct}
-          sub={`${meta.leadsToday} hoy · ${meta.leadsYesterday} ayer`} accent="dark" />
+          sub={`promedio ${fmtCurr(t.spend / meta.rangeDays)}/día`} accent="dark" />
       </div>
 
       {/* TL;DR */}
-      <div className={`bg-white border border-slate-200 ${isCrisis ? 'border-l-4 border-l-amber-500' : 'border-l-4 border-l-[#ff6900]'} rounded-lg p-6`}>
-        <h3 className="font-serif text-lg text-[#0C1015] uppercase tracking-widest mb-3">Resumen ejecutivo</h3>
-        <p className="mb-2 text-slate-900">En los últimos <strong>{meta.rangeDays} días</strong> invertimos <strong>{fmtCurr(t.spend)}</strong> y Meta registró <strong>{t.leads} formularios</strong> a costo de <strong>{fmtCurrDec(t.cpl)}</strong> por formulario.</p>
-        <p className="mb-2 text-slate-900">Distribución sana — <strong>{fmtNum(t.impressions)}</strong> impresiones con CTR de <strong>{fmtPct(t.ctr)}</strong> (sobre benchmark del sector). El alcance y targeting están funcionando bien.</p>
-        {isCrisis ? (
-          <p className="bg-amber-50 border border-amber-200 p-3 rounded text-sm text-slate-700"><strong className="text-amber-800">Últimos 7 días:</strong> {cmp.leads.now} formularios (vs {cmp.leads.prev} previos) · CPL pasó de {fmtCurrDec(cmp.cpl_prev)} a {fmtCurrDec(cmp.cpl_now)}. Estamos refrescando creativos para revertir esta tendencia.</p>
-        ) : (
-          <p className="text-slate-900 text-sm">Últimos 7 días: <strong>{cmp.leads.now}</strong> formularios · CPL {fmtCurrDec(cmp.cpl_now)}.</p>
-        )}
+      <div className="bg-white border border-slate-200 border-l-4 border-l-[#2A6FBC] rounded-lg p-6">
+        <h3 className="font-serif text-lg text-[#002855] uppercase tracking-widest mb-3">Resumen ejecutivo</h3>
+        <p className="mb-2 text-slate-900">En los últimos <strong>{meta.rangeDays} días</strong> invertimos <strong>{fmtCurr(t.spend)}</strong> y Meta generó <strong>{t.messages} conversaciones de WhatsApp</strong> a <strong>{fmtCurr(t.cpMessage)}</strong> por conversación. De esas, <strong>{t.replies}</strong> tuvieron primera respuesta del usuario.</p>
+        <p className="mb-2 text-slate-900">Distribución sana — <strong>{fmtNum(t.impressions)}</strong> impresiones con CTR de <strong>{fmtPct(t.ctr)}</strong>. Como referencia secundaria, también se registraron <strong>{t.leads} formularios</strong> a {fmtCurr(t.cpl)} c/u.</p>
+        <p className="text-slate-900 text-sm">Últimos 7 días: <strong>{cmp.messages.now}</strong> conversaciones {msgChange > 0 ? "📈" : msgChange < 0 ? "📉" : ""} ({msgChange > 0 ? "+" : ""}{msgChange.toFixed(0)}% vs semana anterior) · {cmp.leads.now} formularios.</p>
       </div>
 
-      {/* Mini-cards: top campaña + ad set + creativo */}
+      {/* Week-over-Week growth chart */}
+      <WeekOverWeekChart wow={meta.weekOverWeek} />
+
+      {/* Mini-cards: top campaña + ad set + creativo (sorted by messages now) */}
       <div className="grid grid-cols-3 max-md:grid-cols-1 gap-4">
-        <MiniWin title="Mejor campaña" Icon={Award} data={meta.campaignBreakdown30d.filter(c => c.cpl).sort((a,b) => (a.cpl ?? 9e9) - (b.cpl ?? 9e9))[0]} />
-        <MiniWin title="Mejor ad set" Icon={Target} data={meta.adsets.filter(a => a.cpl).sort((a,b) => (a.cpl ?? 9e9) - (b.cpl ?? 9e9))[0]} />
-        <MiniWin title="Mejor creativo" Icon={Trophy} data={meta.topAds.filter(a => a.cpl).sort((a,b) => (a.cpl ?? 9e9) - (b.cpl ?? 9e9))[0]} />
+        <MiniWin title="Mejor campaña" Icon={Award} data={meta.campaignBreakdown30d.filter(c => c.cpm_msg).sort((a,b) => (a.cpm_msg ?? 9e9) - (b.cpm_msg ?? 9e9))[0] as { name: string; spend: number; messages: number; cpl: number | null } | undefined} metric="messages" />
+        <MiniWin title="Mejor ad set" Icon={Target} data={meta.adsets.filter(a => a.cpm_msg).sort((a,b) => (a.cpm_msg ?? 9e9) - (b.cpm_msg ?? 9e9))[0] as { name: string; spend: number; messages: number; cpl: number | null } | undefined} metric="messages" />
+        <MiniWin title="Mejor creativo" Icon={Trophy} data={meta.topAds.filter(a => (a.messages ?? 0) > 0).sort((a,b) => (b.messages ?? 0) - (a.messages ?? 0))[0] as { name: string; spend: number; messages: number; cpl: number | null } | undefined} metric="messages" />
+      </div>
+    </div>
+  );
+}
+
+function WeekOverWeekChart({ wow }: { wow: MetaData["weekOverWeek"] }) {
+  if (!wow || wow.weeks.length === 0) return null;
+  const maxMsg = Math.max(...wow.weeks.map(w => w.messages), 1);
+  const growth = wow.growthPct;
+  const growthLabel = growth > 0 ? `+${growth.toFixed(0)}% semana vs semana` : growth < 0 ? `${growth.toFixed(0)}% semana vs semana` : "estable";
+  const growthCls = growth > 0 ? "text-green-700 bg-green-50" : growth < 0 ? "text-red-700 bg-red-50" : "text-slate-700 bg-slate-50";
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-6">
+      <div className="flex items-start justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <h3 className="font-serif text-lg text-[#002855] mb-1">Conversaciones WhatsApp por semana</h3>
+          <p className="text-xs text-slate-500">Últimas {wow.weeks.length} semanas · Comparativa semana actual vs anterior</p>
+        </div>
+        <div className={`px-3 py-1.5 rounded-full text-xs font-semibold ${growthCls}`}>
+          {growthLabel}
+        </div>
+      </div>
+      <div className="flex items-end gap-3 h-48 mt-6">
+        {wow.weeks.map((w, i) => {
+          const pct = (w.messages / maxMsg) * 100;
+          const isLatest = i === wow.weeks.length - 1;
+          const isPrev = i === wow.weeks.length - 2;
+          const barCls = isLatest ? "bg-[#002855]" : isPrev ? "bg-[#2A6FBC]" : "bg-slate-300";
+          return (
+            <div key={i} className="flex-1 flex flex-col items-center gap-1 min-w-0">
+              <div className="text-sm font-semibold text-[#002855] tabular-nums">{w.messages}</div>
+              <div className="w-full bg-slate-100 rounded-t flex items-end" style={{ height: "75%" }}>
+                <div className={`w-full rounded-t transition-all ${barCls}`} style={{ height: `${pct}%`, minHeight: w.messages > 0 ? "4px" : "0" }} />
+              </div>
+              <div className="text-[10px] text-slate-500 whitespace-nowrap">{new Date(w.weekStart).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex gap-4 mt-4 text-[11px] text-slate-500">
+        <span className="flex items-center gap-1"><span className="w-3 h-3 bg-[#002855] rounded inline-block" /> Semana actual</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 bg-[#2A6FBC] rounded inline-block" /> Semana anterior</span>
+        <span className="flex items-center gap-1"><span className="w-3 h-3 bg-slate-300 rounded inline-block" /> Históricas</span>
       </div>
     </div>
   );
@@ -516,7 +573,7 @@ function SectionLeads({ meta }: { meta: MetaData }) {
               const label = isToday ? "HOY" : isYesterday ? "Ayer" : new Date(row.date).toLocaleDateString("es-CO", { weekday: "short", day: "2-digit", month: "short" });
               return (
                 <tr key={i} className={`border-b border-slate-100 hover:bg-slate-50 ${isToday ? "bg-amber-50" : ""}`}>
-                  <td className={`p-2.5 font-semibold ${isToday ? "text-[#ff6900]" : ""}`}>{label}</td>
+                  <td className={`p-2.5 font-semibold ${isToday ? "text-[#2A6FBC]" : ""}`}>{label}</td>
                   {meta.activeCampaigns.map((c) => (
                     <td key={c} className="p-2.5 text-center tabular-nums">{row.byCampaign[c] || <span className="text-slate-300">—</span>}</td>
                   ))}
@@ -638,7 +695,7 @@ function SectionLogros({ meta }: { meta: MetaData }) {
         {bestAd && (
           <div className="bg-white border border-slate-200 border-l-4 border-l-green-600 rounded-lg p-6">
             <div className="text-xs text-slate-600 uppercase tracking-widest font-semibold mb-2 flex items-center gap-1.5"><Trophy size={14} className="text-green-600" /> Mejor creativo del período</div>
-            <div className="font-serif text-2xl text-[#0C1015] mb-1">{bestAd.name}</div>
+            <div className="font-serif text-2xl text-[#002855] mb-1">{bestAd.name}</div>
             <div className="text-sm text-slate-600 mb-3">en {bestAd.adset}</div>
             <div className="grid grid-cols-3 gap-3 text-sm">
               <div><div className="text-xs text-slate-500">Leads</div><div className="font-bold text-lg">{bestAd.leads}</div></div>
@@ -650,7 +707,7 @@ function SectionLogros({ meta }: { meta: MetaData }) {
         {bestAdset && (
           <div className="bg-white border border-slate-200 border-l-4 border-l-green-600 rounded-lg p-6">
             <div className="text-xs text-slate-600 uppercase tracking-widest font-semibold mb-2 flex items-center gap-1.5"><Target size={14} className="text-green-600" /> Ad set más eficiente</div>
-            <div className="font-serif text-2xl text-[#0C1015] mb-1">{bestAdset.name}</div>
+            <div className="font-serif text-2xl text-[#002855] mb-1">{bestAdset.name}</div>
             <div className="text-sm text-slate-600 mb-3">campaña: {shortName(bestAdset.campaign)}</div>
             <div className="grid grid-cols-3 gap-3 text-sm">
               <div><div className="text-xs text-slate-500">Leads</div><div className="font-bold text-lg">{bestAdset.leads}</div></div>
@@ -664,12 +721,12 @@ function SectionLogros({ meta }: { meta: MetaData }) {
       <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
         <div className={`bg-white border border-slate-200 border-l-4 ${reachGrowth > 0 ? "border-l-green-600" : "border-l-amber-600"} rounded-lg p-6`}>
           <div className="text-xs text-slate-600 uppercase tracking-widest font-semibold mb-2 flex items-center gap-1.5"><TrendingUp size={14} className="text-slate-500" /> Crecimiento de alcance</div>
-          <div className="font-serif text-4xl text-[#0C1015] mb-2">{reachGrowth > 0 ? "+" : ""}{reachGrowth.toFixed(0)}%</div>
+          <div className="font-serif text-4xl text-[#002855] mb-2">{reachGrowth > 0 ? "+" : ""}{reachGrowth.toFixed(0)}%</div>
           <div className="text-sm text-slate-600">{fmtNum(meta.monthOverMonth.current.impressions)} impresiones vs {fmtNum(meta.monthOverMonth.prior.impressions)} en el período anterior</div>
         </div>
         <div className={`bg-white border border-slate-200 border-l-4 ${cplDelta < 0 ? "border-l-green-600" : "border-l-amber-600"} rounded-lg p-6`}>
           <div className="text-xs text-slate-600 uppercase tracking-widest font-semibold mb-2 flex items-center gap-1.5"><Award size={14} className="text-slate-500" /> {cplDelta < 0 ? "Mejora en CPL" : "CPL del período"}</div>
-          <div className="font-serif text-4xl text-[#0C1015] mb-2">{cplDelta > 0 ? "+" : ""}{cplDelta.toFixed(0)}%</div>
+          <div className="font-serif text-4xl text-[#002855] mb-2">{cplDelta > 0 ? "+" : ""}{cplDelta.toFixed(0)}%</div>
           <div className="text-sm text-slate-600">{fmtCurrDec(meta.monthOverMonth.prior.cpl)} → {fmtCurrDec(meta.monthOverMonth.current.cpl)}</div>
         </div>
       </div>
@@ -698,20 +755,20 @@ function SectionTendencias({ meta, t, cmp, cplChange }: { meta: MetaData; t: Met
       new C(trendRef.current!.getContext("2d")!, {
         type: "line",
         data: { labels: meta.daily.map(x => x.date.slice(5)), datasets: [
-          { label: "Inversión", data: meta.daily.map(x => x.spend), borderColor: "#0C1015", backgroundColor: "rgba(12,16,21,0.05)", fill: true, tension: 0.32, yAxisID: "y", pointRadius: 0, borderWidth: 2 },
-          { label: "Leads", data: meta.daily.map(x => x.leads), borderColor: "#ff6900", fill: false, tension: 0.32, yAxisID: "y1", pointRadius: 3, borderWidth: 2 },
+          { label: "Inversión", data: meta.daily.map(x => x.spend), borderColor: "#002855", backgroundColor: "rgba(12,16,21,0.05)", fill: true, tension: 0.32, yAxisID: "y", pointRadius: 0, borderWidth: 2 },
+          { label: "Leads", data: meta.daily.map(x => x.leads), borderColor: "#2A6FBC", fill: false, tension: 0.32, yAxisID: "y1", pointRadius: 3, borderWidth: 2 },
         ]},
         options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-          plugins: { legend: { display: false }, tooltip: { backgroundColor: "#0C1015" } },
+          plugins: { legend: { display: false }, tooltip: { backgroundColor: "#002855" } },
           scales: {
             x: { grid: { display: false }, ticks: { color: "#475569", font: { size: 11 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 10 } },
-            y: { position: "left", grid: { color: "#F1F5F9" }, ticks: { color: "#0C1015", callback: (v: number | string) => "$" + v } },
-            y1: { position: "right", grid: { display: false }, ticks: { color: "#ff6900", stepSize: 2 }, min: 0 },
+            y: { position: "left", grid: { color: "#F1F5F9" }, ticks: { color: "#002855", callback: (v: number | string) => "$" + v } },
+            y1: { position: "right", grid: { display: false }, ticks: { color: "#2A6FBC", stepSize: 2 }, min: 0 },
           } } });
       new C(reachRef.current!.getContext("2d")!, {
         type: "bar",
-        data: { labels: meta.daily.map(x => x.date.slice(5)), datasets: [{ label: "Reach", data: meta.daily.map(x => x.reach), backgroundColor: "#ff6900", borderRadius: 4, maxBarThickness: 18 }] },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { backgroundColor: "#0C1015", callbacks: { label: (c: { parsed: { y: number } }) => fmtNum(c.parsed.y) + " cuentas alcanzadas" } } },
+        data: { labels: meta.daily.map(x => x.date.slice(5)), datasets: [{ label: "Reach", data: meta.daily.map(x => x.reach), backgroundColor: "#2A6FBC", borderRadius: 4, maxBarThickness: 18 }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { backgroundColor: "#002855", callbacks: { label: (c: { parsed: { y: number } }) => fmtNum(c.parsed.y) + " cuentas alcanzadas" } } },
           scales: { x: { grid: { display: false }, ticks: { color: "#475569", maxRotation: 0, autoSkip: true, maxTicksLimit: 10 } }, y: { grid: { color: "#F1F5F9" }, ticks: { color: "#475569", callback: (v: number | string) => fmtNum(Number(v)) } } } } });
     }
   }, [meta]);
@@ -736,7 +793,7 @@ function SectionTendencias({ meta, t, cmp, cplChange }: { meta: MetaData; t: Met
         <div className="relative h-64"><canvas ref={reachRef}></canvas></div>
       </div>
 
-      <h3 className="font-serif text-lg uppercase tracking-widest text-[#0C1015] mt-8">Comparativa Período vs Período</h3>
+      <h3 className="font-serif text-lg uppercase tracking-widest text-[#002855] mt-8">Comparativa Período vs Período</h3>
       <div className="grid grid-cols-4 max-md:grid-cols-2 gap-3">
         {[
           { lbl: "Inversión", cur: fmtCurr(meta.monthOverMonth.current.spend), prev: fmtCurr(meta.monthOverMonth.prior.spend), delta: meta.monthOverMonth.deltas.spend, lowerBetter: false, neutral: true },
@@ -749,8 +806,8 @@ function SectionTendencias({ meta, t, cmp, cplChange }: { meta: MetaData; t: Met
           return (
             <div key={i} className="bg-white border border-slate-200 rounded-lg p-4">
               <div className="text-xs text-slate-600 uppercase tracking-widest font-semibold mb-2">{m.lbl}</div>
-              <div className="flex justify-between text-xs text-slate-400"><span>Prev</span><span className="font-serif text-base text-[#0C1015]">{m.prev}</span></div>
-              <div className="flex justify-between text-xs text-slate-400 mt-1"><span>Actual</span><span className="font-serif text-base text-[#0C1015]">{m.cur}</span></div>
+              <div className="flex justify-between text-xs text-slate-400"><span>Prev</span><span className="font-serif text-base text-[#002855]">{m.prev}</span></div>
+              <div className="flex justify-between text-xs text-slate-400 mt-1"><span>Actual</span><span className="font-serif text-base text-[#002855]">{m.cur}</span></div>
               <div className={`mt-2 pt-2 border-t border-slate-100 text-sm font-semibold ${cls}`}>{arrow} {Math.abs(m.delta).toFixed(1)}%</div>
             </div>
           );
@@ -762,30 +819,32 @@ function SectionTendencias({ meta, t, cmp, cplChange }: { meta: MetaData; t: Met
 
 function SectionRecomendaciones({ meta, isCrisis, cplChange, cmp }: { meta: MetaData; isCrisis: boolean; cplChange: number; cmp: MetaData["last7vsPrev7"] }) {
   const statusByName = new Map(meta.campaignStatuses.map(s => [s.name, s]));
-  const sortedAdsets = [...meta.adsets].sort((a, b) => (b.leads || 0) - (a.leads || 0));
-  const topAd = [...meta.topAds].filter(a => (a.leads ?? 0) > 0).sort((a, b) => (a.cpl ?? 9e9) - (b.cpl ?? 9e9))[0];
+  const sortedAdsets = [...meta.adsets].sort((a, b) => (b.messages || 0) - (a.messages || 0));
+  const topAd = [...meta.topAds].filter(a => (a.messages ?? 0) > 0).sort((a, b) => (b.messages ?? 0) - (a.messages ?? 0))[0];
 
   // Build creative recommendations dynamically based on data
   type Reco = { priority: "high" | "med" | "low"; title: string; rationale: string; action: string; impact?: string };
   const recos: Reco[] = [];
   if (topAd) {
+    const adCpMsg = topAd.spend > 0 && topAd.messages > 0 ? topAd.spend / topAd.messages : 0;
     recos.push({
       priority: "high",
       title: `Producir 2 variantes nuevas en el estilo de "${topAd.name}"`,
-      rationale: `Es el creativo con mejor performance: ${topAd.leads} leads a ${topAd.cpl ? fmtCurr(topAd.cpl) : "—"} CPL vs ${fmtCurr(meta.totals30d.cpl)} promedio de la cuenta. Sumar variantes ahora — antes que se fatigue — sostiene este rendimiento.`,
+      rationale: `Es el creativo con mejor performance: ${topAd.messages} conversaciones de WhatsApp${adCpMsg > 0 ? ` a ${fmtCurr(adCpMsg)} por conversación` : ""} vs ${fmtCurr(meta.totals30d.cpMessage)} promedio. Sumar variantes ahora — antes que se fatigue — sostiene este rendimiento.`,
       action: "Brief al equipo creativo: 2 variantes nuevas con el mismo hook, mensaje y formato. Agregar SIN pausar el original (preserva el learning de Meta).",
-      impact: "Refrescar el formato ganador antes de la fatiga mantiene el CPL cerca del top performer en lugar de derivar hacia el promedio.",
+      impact: "Refrescar el formato ganador antes de la fatiga mantiene el costo por conversación cerca del top performer en lugar de derivar hacia el promedio.",
     });
   }
   // Generic high-CPL warning (data-driven, vertical-agnostic)
-  const fatiguedAdset = sortedAdsets.find(a => a.cpl && a.cpl > meta.totals30d.cpl * 2 && a.leads >= 1);
+  const avgCpMsg = meta.totals30d.cpMessage || 0;
+  const fatiguedAdset = sortedAdsets.find(a => a.cpm_msg && avgCpMsg > 0 && a.cpm_msg > avgCpMsg * 2 && (a.messages ?? 0) >= 1);
   if (fatiguedAdset) {
     recos.push({
       priority: "high",
       title: `Refrescar creativo en "${fatiguedAdset.name}"`,
-      rationale: `Este ad set tiene CPL de ${fmtCurr(fatiguedAdset.cpl!)} — más del doble del promedio de la cuenta (${fmtCurr(meta.totals30d.cpl)}). La audiencia está fatigada o el creativo necesita renovación.`,
+      rationale: `Este ad set tiene costo por conversación de ${fmtCurr(fatiguedAdset.cpm_msg!)} — más del doble del promedio de la cuenta (${fmtCurr(avgCpMsg)}). La audiencia está fatigada o el creativo necesita renovación.`,
       action: "Producir 2 variantes creativas nuevas y agregarlas SIN pausar la existente (preserva el learning).",
-      impact: "Refrescar ad sets fatigados típicamente devuelve el CPL al promedio de cuenta en 7-14 días.",
+      impact: "Refrescar ad sets fatigados típicamente devuelve el costo por conversación al promedio en 7-14 días.",
     });
   }
 
@@ -796,12 +855,12 @@ function SectionRecomendaciones({ meta, isCrisis, cplChange, cmp }: { meta: Meta
     <div className="space-y-6">
       {/* NEXT STEP — la card grande que llama la atención */}
       {nextStep && (
-        <div className="bg-[#0C1015] text-white rounded-lg p-6 border-l-4 border-l-[#ff6900]">
-          <div className="text-xs uppercase tracking-widest text-[#ff6900] font-semibold mb-2">Próximo paso · Esta semana</div>
+        <div className="bg-[#002855] text-white rounded-lg p-6 border-l-4 border-l-[#2A6FBC]">
+          <div className="text-xs uppercase tracking-widest text-[#2A6FBC] font-semibold mb-2">Próximo paso · Esta semana</div>
           <h3 className="font-serif text-2xl mb-3">{nextStep.title}</h3>
           <p className="text-sm text-slate-200 mb-3">{nextStep.rationale}</p>
           <div className="bg-white/5 border border-white/10 rounded p-3 text-sm">
-            <div className="text-xs uppercase tracking-widest text-[#ff6900] font-semibold mb-1">Acción concreta</div>
+            <div className="text-xs uppercase tracking-widest text-[#2A6FBC] font-semibold mb-1">Acción concreta</div>
             <p className="text-slate-100">{nextStep.action}</p>
           </div>
           {nextStep.impact && <p className="text-xs text-slate-400 mt-3 italic"><Sparkles size={12} className="inline mr-1" />{nextStep.impact}</p>}
@@ -831,7 +890,7 @@ function SectionRecomendaciones({ meta, isCrisis, cplChange, cmp }: { meta: Meta
             <div key={i} className="flex items-center justify-between gap-3 py-2 border-b border-slate-100 last:border-0">
               <div className="flex items-center gap-3 min-w-0">
                 <StatusBadge status={s} />
-                <span className="font-semibold text-sm text-[#0C1015] truncate">{s.name}</span>
+                <span className="font-semibold text-sm text-[#002855] truncate">{s.name}</span>
               </div>
               <div className="text-xs text-slate-500 whitespace-nowrap">
                 {s.started_at && `Inició ${new Date(s.started_at).toLocaleDateString("es-CO", { day:"2-digit", month:"short", year:"2-digit" })}`}
@@ -843,7 +902,7 @@ function SectionRecomendaciones({ meta, isCrisis, cplChange, cmp }: { meta: Meta
 
       {/* CREATIVE RECOMMENDATIONS — the new juicy section */}
       <div>
-        <h3 className="font-serif text-xl mb-3 flex items-center gap-2 text-[#0C1015]"><Lightbulb size={20} className="text-[#ff6900]" /> Recomendaciones de creativos &amp; estrategia</h3>
+        <h3 className="font-serif text-xl mb-3 flex items-center gap-2 text-[#002855]"><Lightbulb size={20} className="text-[#2A6FBC]" /> Recomendaciones de creativos &amp; estrategia</h3>
         <p className="text-sm text-slate-500 mb-4">Basadas en lo que está funcionando en su cuenta.</p>
         <div className="space-y-3">
           {recos.map((r, i) => {
@@ -853,7 +912,7 @@ function SectionRecomendaciones({ meta, isCrisis, cplChange, cmp }: { meta: Meta
             return (
               <div key={i} className={`bg-white border border-slate-200 border-l-4 ${priColors.border} rounded-lg p-5`}>
                 <div className="flex items-start justify-between gap-3 mb-2">
-                  <h4 className="font-serif text-base text-[#0C1015] flex-1">{r.title}</h4>
+                  <h4 className="font-serif text-base text-[#002855] flex-1">{r.title}</h4>
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${priColors.chip} whitespace-nowrap`}>{priColors.label}</span>
                 </div>
                 <p className="text-sm text-slate-700 mb-3">{r.rationale}</p>
@@ -861,7 +920,7 @@ function SectionRecomendaciones({ meta, isCrisis, cplChange, cmp }: { meta: Meta
                   <div className="text-xs uppercase tracking-widest text-slate-500 font-semibold mb-1">Acción concreta</div>
                   <p className="text-slate-900">{r.action}</p>
                 </div>
-                {r.impact && <p className="text-xs text-slate-500 italic"><Sparkles size={11} className="inline mr-1 text-[#ff6900]" />{r.impact}</p>}
+                {r.impact && <p className="text-xs text-slate-500 italic"><Sparkles size={11} className="inline mr-1 text-[#2A6FBC]" />{r.impact}</p>}
               </div>
             );
           })}
@@ -891,9 +950,14 @@ function SectionRecomendaciones({ meta, isCrisis, cplChange, cmp }: { meta: Meta
         <div className="bg-white border border-red-200 border-l-4 border-l-red-600 rounded-lg p-5">
           <h4 className="font-serif text-base text-red-700 mb-3 flex items-center gap-2"><Ban size={16} /> Pausar (ad sets activos)</h4>
           {(() => {
+            const accountAvgCpMsg = meta.totals30d.cpMessage || 0;
+            // Pause ONLY if: high spend AND zero messages AND zero leads
+            // OR: cost per message > 3× account average. Never pause winners.
             const toCut = sortedAdsets.filter(a => {
-              if (a.spend <= 100) return false;
-              if (a.leads !== 0 && (a.cpl === null || a.cpl <= 100)) return false;
+              if (a.spend <= 200000) return false; // <200K COP spend = too little to judge
+              const cpMsgBad = a.cpm_msg !== null && accountAvgCpMsg > 0 && a.cpm_msg > accountAvgCpMsg * 3;
+              const totallyDead = (a.messages ?? 0) === 0 && (a.leads ?? 0) === 0;
+              if (!cpMsgBad && !totallyDead) return false;
               const s = statusByName.get(a.campaign);
               return s?.label === "active";
             }).slice(0, 5);
@@ -902,19 +966,26 @@ function SectionRecomendaciones({ meta, isCrisis, cplChange, cmp }: { meta: Meta
                 {toCut.map((a, i) => (
                   <li key={i} className="flex justify-between gap-2 border-b border-slate-100 pb-2 last:border-0">
                     <span><strong>{a.name}</strong><br /><span className="text-xs text-slate-500">{shortName(a.campaign)}</span></span>
-                    <span className="text-right text-xs whitespace-nowrap"><span className="text-red-600 font-semibold">${a.spend.toFixed(0)}</span><br /><span>{a.leads || 0} leads</span></span>
+                    <span className="text-right text-xs whitespace-nowrap">
+                      <span className="text-red-600 font-semibold">{fmtCurr(a.spend)}</span><br />
+                      <span>{a.messages ?? 0} msg · {a.leads ?? 0} leads</span>
+                    </span>
                   </li>
                 ))}
               </ul>
-            ) : <p className="text-sm text-slate-600">Nada urgente que pausar entre las campañas activas.</p>;
+            ) : <p className="text-sm text-slate-600">Nada urgente que pausar — todos los ad sets activos están generando conversaciones a costo razonable.</p>;
           })()}
         </div>
 
         <div className="bg-white border border-green-200 border-l-4 border-l-green-600 rounded-lg p-5">
           <h4 className="font-serif text-base text-green-700 mb-3 flex items-center gap-2"><CheckCircle2 size={16} /> Mantener funcionando</h4>
           {(() => {
+            const accountAvgCpMsg = meta.totals30d.cpMessage || 0;
+            // Winners: produced at least 10 messages AND cost per message ≤ account average
             const toKeep = sortedAdsets.filter(a => {
-              if (a.cpl === null || a.cpl >= 60 || a.leads < 5) return false;
+              if ((a.messages ?? 0) < 10) return false;
+              if (a.cpm_msg === null || accountAvgCpMsg === 0) return false;
+              if (a.cpm_msg > accountAvgCpMsg) return false;
               const s = statusByName.get(a.campaign);
               return s?.label === "active";
             }).slice(0, 4);
@@ -923,11 +994,14 @@ function SectionRecomendaciones({ meta, isCrisis, cplChange, cmp }: { meta: Meta
                 {toKeep.map((a, i) => (
                   <li key={i} className="flex justify-between gap-2 border-b border-slate-100 pb-2 last:border-0">
                     <span><strong>{a.name}</strong><br /><span className="text-xs text-slate-500">{shortName(a.campaign)}</span></span>
-                    <span className="text-right text-xs whitespace-nowrap"><span className="text-green-600 font-semibold">{fmtCurrDec(a.cpl!)}</span><br /><span>{a.leads} leads</span></span>
+                    <span className="text-right text-xs whitespace-nowrap">
+                      <span className="text-green-600 font-semibold">{fmtCurr(a.cpm_msg!)}/msg</span><br />
+                      <span>{a.messages ?? 0} conversaciones</span>
+                    </span>
                   </li>
                 ))}
               </ul>
-            ) : <p className="text-sm text-slate-600">Ningún ad set sostiene CPL bajo ahora mismo.</p>;
+            ) : <p className="text-sm text-slate-600">Ningún ad set sostiene costo bajo por conversación todavía.</p>;
           })()}
         </div>
       </div>
@@ -954,11 +1028,11 @@ function DeltaIcon({ delta, lowerBetter, size = 12 }: { delta: number; lowerBett
 }
 
 function HeroKPI({ label, value, delta, lowerBetter, sub, accent = "dark" }: { label: string; value: string; delta?: number; lowerBetter?: boolean; sub?: string; accent?: "dark" | "gold" | "red" }) {
-  const accentBorder = accent === "gold" ? "border-l-[#ff6900]" : accent === "red" ? "border-l-red-600" : "border-l-[#0C1015]";
+  const accentBorder = accent === "gold" ? "border-l-[#2A6FBC]" : accent === "red" ? "border-l-red-600" : "border-l-[#002855]";
   return (
     <div className={`bg-white border border-slate-200 border-l-4 ${accentBorder} rounded-lg p-6`}>
       <div className="text-xs text-slate-600 uppercase tracking-widest font-semibold mb-2">{label}</div>
-      <div className="font-serif text-4xl text-[#0C1015] mb-2 leading-none">{value}</div>
+      <div className="font-serif text-4xl text-[#002855] mb-2 leading-none">{value}</div>
       {typeof delta === "number" && (
         <div className="flex items-center gap-1.5 text-sm">
           <DeltaIcon delta={delta} lowerBetter={lowerBetter} size={14} />
@@ -974,22 +1048,24 @@ function KPI({ label, value, delta, lowerBetter, sub }: { label: string; value: 
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4">
       <div className="text-xs text-slate-600 uppercase tracking-widest font-semibold mb-2">{label}</div>
-      <div className="font-serif text-2xl text-[#0C1015] mb-1 leading-none">{value}</div>
+      <div className="font-serif text-2xl text-[#002855] mb-1 leading-none">{value}</div>
       {typeof delta === "number" && <DeltaIcon delta={delta} lowerBetter={lowerBetter} />}
       {sub && <div className="text-xs text-slate-400 mt-1">{sub}</div>}
     </div>
   );
 }
 
-function MiniWin({ title, Icon, data }: { title: string; Icon: typeof Award; data: { name: string; spend?: number; leads?: number; cpl: number | null } | undefined }) {
+function MiniWin({ title, Icon, data, metric = "leads" }: { title: string; Icon: typeof Award; data: { name: string; spend?: number; leads?: number; messages?: number; cpl: number | null } | undefined; metric?: "messages" | "leads" }) {
   if (!data) return null;
+  const value = metric === "messages" ? (data.messages ?? 0) : (data.leads ?? 0);
+  const label = metric === "messages" ? "conversaciones" : "leads";
   return (
     <div className="bg-white border border-slate-200 border-l-4 border-l-green-600 rounded-lg p-4">
       <div className="text-xs text-slate-600 uppercase tracking-widest font-semibold mb-2 flex items-center gap-1.5">
         <Icon size={14} className="text-green-600" /> {title}
       </div>
-      <div className="font-serif text-base text-[#0C1015] mb-1 leading-tight">{data.name}</div>
-      <div className="text-xs text-slate-500">{data.leads || 0} leads · {data.cpl ? fmtCurrDec(data.cpl) : "—"} CPL</div>
+      <div className="font-serif text-base text-[#002855] mb-1 leading-tight">{data.name}</div>
+      <div className="text-xs text-slate-500">{value} {label}{data.spend ? ` · ${fmtCurr(data.spend)} invertido` : ""}</div>
     </div>
   );
 }
@@ -1103,7 +1179,7 @@ function GoogleView({ data, activeSection }: { data: GoogleData; activeSection: 
                   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${s.label === "active" ? "bg-green-100 text-green-800" : s.label === "paused" ? "bg-slate-200 text-slate-700" : "bg-slate-100 text-slate-500"}`}>
                     {s.label === "active" ? "Activa" : s.label === "paused" ? "Pausada" : "Histórica"}
                   </span>
-                  <span className="font-semibold text-sm text-[#0C1015] truncate">{s.name}</span>
+                  <span className="font-semibold text-sm text-[#002855] truncate">{s.name}</span>
                 </div>
               </div>
             ))}
@@ -1163,7 +1239,7 @@ function GoogleView({ data, activeSection }: { data: GoogleData; activeSection: 
                 <div key={i} className="flex items-center gap-3 text-xs">
                   <span className="w-16 text-slate-500 tabular-nums">{new Date(d.date).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</span>
                   <div className="flex-1 bg-slate-100 rounded h-6 relative overflow-hidden">
-                    <div className="bg-[#ff6900] h-full" style={{ width: `${pct}%` }} />
+                    <div className="bg-[#2A6FBC] h-full" style={{ width: `${pct}%` }} />
                   </div>
                   <span className="w-24 text-right tabular-nums text-slate-700">{fmtCurr(d.spend)}</span>
                   <span className="w-20 text-right tabular-nums font-semibold">{d.conversions.toFixed(0)} conv</span>
@@ -1193,7 +1269,7 @@ function Row({ lbl, val, highlight }: { lbl: string; val: string; highlight?: st
   return (
     <div className="flex justify-between items-baseline py-1 border-b border-slate-100 last:border-0">
       <span className="text-slate-600">{lbl}</span>
-      <span className={`font-semibold tabular-nums ${highlight || "text-[#0C1015]"}`}>{val}</span>
+      <span className={`font-semibold tabular-nums ${highlight || "text-[#002855]"}`}>{val}</span>
     </div>
   );
 }
@@ -1211,11 +1287,11 @@ function DeepRecommendationsBlock({ dr }: { dr: DeepRecommendations }) {
 
       {/* Budget audit */}
       <div className="bg-white border border-slate-200 rounded-lg p-5">
-        <h3 className="font-serif text-lg mb-1 flex items-center gap-2 text-[#0C1015]">
-          <Activity size={18} className="text-[#ff6900]" /> Auditoría de presupuesto
+        <h3 className="font-serif text-lg mb-1 flex items-center gap-2 text-[#002855]">
+          <Activity size={18} className="text-[#2A6FBC]" /> Auditoría de presupuesto
         </h3>
         <p className="text-xs text-slate-500 mb-4">
-          Capacidad asignada (cap diario × 30): <strong className="text-[#0C1015]">${ba.totalMonthlyBudget.toFixed(0)}/mes</strong>. El gasto real depende del rendimiento — Meta gasta menos del cap cuando no encuentra demanda.
+          Capacidad asignada (cap diario × 30): <strong className="text-[#002855]">${ba.totalMonthlyBudget.toFixed(0)}/mes</strong>. El gasto real depende del rendimiento — Meta gasta menos del cap cuando no encuentra demanda.
         </p>
         <div className="grid grid-cols-4 max-md:grid-cols-2 gap-3 mb-4">
           {[
@@ -1233,17 +1309,17 @@ function DeepRecommendationsBlock({ dr }: { dr: DeepRecommendations }) {
           ))}
         </div>
         {ba.reassignableBudget > 0 && (
-          <div className="bg-[#0C1015] text-white rounded p-4 text-sm">
-            <div className="text-xs uppercase tracking-widest text-[#ff6900] font-semibold mb-1">Presupuesto reasignable</div>
-            <p>Pausando los <strong>{ba.losers.count} ad set{ba.losers.count !== 1 ? "s" : ""} perdedor{ba.losers.count !== 1 ? "es" : ""}</strong> se liberan <strong className="text-[#ff6900]">${ba.reassignableBudget.toFixed(0)}/mes</strong> para invertir en tests nuevos sin afectar lo que funciona.</p>
+          <div className="bg-[#002855] text-white rounded p-4 text-sm">
+            <div className="text-xs uppercase tracking-widest text-[#2A6FBC] font-semibold mb-1">Presupuesto reasignable</div>
+            <p>Pausando los <strong>{ba.losers.count} ad set{ba.losers.count !== 1 ? "s" : ""} perdedor{ba.losers.count !== 1 ? "es" : ""}</strong> se liberan <strong className="text-[#2A6FBC]">${ba.reassignableBudget.toFixed(0)}/mes</strong> para invertir en tests nuevos sin afectar lo que funciona.</p>
           </div>
         )}
       </div>
 
       {/* Audience tests (budget-constrained) */}
       <div className="bg-white border border-slate-200 rounded-lg p-5">
-        <h3 className="font-serif text-lg mb-1 flex items-center gap-2 text-[#0C1015]">
-          <Target size={18} className="text-[#ff6900]" /> Audiencias nuevas a probar
+        <h3 className="font-serif text-lg mb-1 flex items-center gap-2 text-[#002855]">
+          <Target size={18} className="text-[#2A6FBC]" /> Audiencias nuevas a probar
           <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 uppercase tracking-wider">Nuevo</span>
         </h3>
         <p className="text-xs text-slate-500 mb-4">{audienceTests.note}</p>
@@ -1256,7 +1332,7 @@ function DeepRecommendationsBlock({ dr }: { dr: DeepRecommendations }) {
               return (
                 <div key={i} className="border border-slate-200 rounded p-4">
                   <div className="flex items-start justify-between gap-2 mb-2">
-                    <h4 className="font-semibold text-sm text-[#0C1015]">{s.title}</h4>
+                    <h4 className="font-semibold text-sm text-[#002855]">{s.title}</h4>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${risk.cls} whitespace-nowrap`}>{risk.lbl}</span>
                   </div>
                   <p className="text-xs text-slate-700 mb-2"><strong>Audiencia:</strong> {s.audience}</p>
@@ -1280,8 +1356,8 @@ function DeepRecommendationsBlock({ dr }: { dr: DeepRecommendations }) {
       {/* Creative variants per active ad set */}
       {creativeVariants.length > 0 && (
         <div className="bg-white border border-slate-200 rounded-lg p-5">
-          <h3 className="font-serif text-lg mb-1 flex items-center gap-2 text-[#0C1015]">
-            <Sparkles size={18} className="text-[#ff6900]" /> Variantes creativas por audiencia
+          <h3 className="font-serif text-lg mb-1 flex items-center gap-2 text-[#002855]">
+            <Sparkles size={18} className="text-[#2A6FBC]" /> Variantes creativas por audiencia
             <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 uppercase tracking-wider">Nuevo</span>
           </h3>
           <p className="text-xs text-slate-500 mb-4">Probar creativos nuevos DENTRO de audiencias que ya funcionan = menor riesgo. Meta solo tiene que aprender el creativo, no la audiencia.</p>
@@ -1290,11 +1366,11 @@ function DeepRecommendationsBlock({ dr }: { dr: DeepRecommendations }) {
               <div key={i} className="border border-slate-200 rounded p-3">
                 <div className="flex items-start justify-between gap-2 mb-1">
                   <div className="min-w-0">
-                    <h4 className="font-semibold text-sm text-[#0C1015] truncate">{v.adset}</h4>
+                    <h4 className="font-semibold text-sm text-[#002855] truncate">{v.adset}</h4>
                     <p className="text-[10px] text-slate-500 truncate">{shortName(v.campaign)}</p>
                   </div>
                   <span className="text-xs whitespace-nowrap">
-                    <strong className="text-[#ff6900]">+{v.recommendedAdds} variantes</strong>
+                    <strong className="text-[#2A6FBC]">+{v.recommendedAdds} variantes</strong>
                   </span>
                 </div>
                 <div className="flex gap-3 text-[11px] text-slate-500 mb-1">
@@ -1315,8 +1391,8 @@ function DeepRecommendationsBlock({ dr }: { dr: DeepRecommendations }) {
 
       {/* Structure recommendation */}
       <div className="bg-white border border-slate-200 rounded-lg p-5">
-        <h3 className="font-serif text-lg mb-1 flex items-center gap-2 text-[#0C1015]">
-          <Award size={18} className="text-[#ff6900]" /> Estructura de campañas (CBO vs ABO)
+        <h3 className="font-serif text-lg mb-1 flex items-center gap-2 text-[#002855]">
+          <Award size={18} className="text-[#2A6FBC]" /> Estructura de campañas (CBO vs ABO)
           <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 uppercase tracking-wider">Nuevo</span>
         </h3>
         <p className="text-xs text-slate-500 mb-4">CBO = Meta decide presupuesto por ad set. ABO = nosotros decidimos. Cambio recomendado cuando hay señal suficiente (≥50 conversiones).</p>
@@ -1330,7 +1406,7 @@ function DeepRecommendationsBlock({ dr }: { dr: DeepRecommendations }) {
             return (
               <div key={i} className="border border-slate-200 rounded p-3">
                 <div className="flex items-start justify-between gap-2 mb-1">
-                  <h4 className="font-semibold text-sm text-[#0C1015] truncate flex-1">{shortName(s.name)}</h4>
+                  <h4 className="font-semibold text-sm text-[#002855] truncate flex-1">{shortName(s.name)}</h4>
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${recBadge.cls} whitespace-nowrap`}>{recBadge.lbl}</span>
                 </div>
                 <div className="flex gap-3 text-[11px] text-slate-500 mb-1">
@@ -1348,8 +1424,8 @@ function DeepRecommendationsBlock({ dr }: { dr: DeepRecommendations }) {
 
       {/* Evaluation calendar */}
       <div className="bg-white border border-slate-200 rounded-lg p-5">
-        <h3 className="font-serif text-lg mb-1 flex items-center gap-2 text-[#0C1015]">
-          <CalendarDays size={18} className="text-[#ff6900]" /> Calendario de evaluación
+        <h3 className="font-serif text-lg mb-1 flex items-center gap-2 text-[#002855]">
+          <CalendarDays size={18} className="text-[#2A6FBC]" /> Calendario de evaluación
           <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 uppercase tracking-wider">Nuevo</span>
         </h3>
         <p className="text-xs text-slate-500 mb-4">Reglas de Meta respetadas: no pausar campañas &lt;14d, no pausar creativos &lt;7d, no migrar CBO &lt;50 conversiones.</p>

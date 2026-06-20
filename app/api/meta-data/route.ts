@@ -79,24 +79,24 @@ export async function GET(req: Request) {
     // (added activeLast7 query to detect spend + campaignStatusRaw for true status)
     const [dailyRaw, priorRaw, campaignRaw, adsetRaw, adsRaw, activeLast7Raw, dailyByCampaignRaw, campaignStatusRaw] = await Promise.all([
       windsor({
-        fields: "date,account_id,campaign,spend,impressions,reach,clicks,actions_link_click,actions_lead,ctr,cpm,cpc",
+        fields: "date,account_id,campaign,spend,impressions,reach,clicks,actions_link_click,actions_lead,actions_onsite_conversion_messaging_conversation_started_7d,actions_onsite_conversion_messaging_first_reply,ctr,cpm,cpc",
         date_preset: datePreset,
       }),
       windsor({
-        fields: "date,account_id,campaign,spend,impressions,actions_lead",
+        fields: "date,account_id,campaign,spend,impressions,actions_lead,actions_onsite_conversion_messaging_conversation_started_7d",
         date_from: fmtDate(priorStart),
         date_to: fmtDate(priorEnd),
       }),
       windsor({
-        fields: "campaign,account_id,spend,impressions,clicks,actions_lead",
+        fields: "campaign,account_id,spend,impressions,clicks,actions_lead,actions_onsite_conversion_messaging_conversation_started_7d,actions_onsite_conversion_messaging_first_reply",
         date_preset: datePreset,
       }),
       windsor({
-        fields: "adset_name,campaign,account_id,spend,impressions,reach,frequency,clicks,actions_link_click,actions_lead,ctr,cpc,adset_daily_budget,adset_lifetime_budget,campaign_daily_budget,effective_status",
+        fields: "adset_name,campaign,account_id,spend,impressions,reach,frequency,clicks,actions_link_click,actions_lead,actions_onsite_conversion_messaging_conversation_started_7d,actions_onsite_conversion_messaging_first_reply,ctr,cpc,adset_daily_budget,adset_lifetime_budget,campaign_daily_budget,effective_status",
         date_preset: datePreset,
       }),
       windsor({
-        fields: "ad_name,adset_name,campaign,account_id,spend,impressions,clicks,actions_link_click,actions_lead,ctr,cpc,ad_created_time",
+        fields: "ad_name,adset_name,campaign,account_id,spend,impressions,clicks,actions_link_click,actions_lead,actions_onsite_conversion_messaging_conversation_started_7d,ctr,cpc,ad_created_time",
         date_preset: datePreset,
       }),
       // Active campaigns = had spend in the last 7 days
@@ -180,12 +180,17 @@ export async function GET(req: Request) {
     );
     const isActive = (camp: string | undefined) => !!camp && activeCampaigns.has(camp);
 
+    // === Helper: Amudar's primary KPI is WhatsApp conversations, NOT form leads ===
+    // Form leads are tracked but secondary. CPM = "Costo por Mensaje" (Cost per Message).
+    const MSG_FIELD = "actions_onsite_conversion_messaging_conversation_started_7d";
+    const REPLY_FIELD = "actions_onsite_conversion_messaging_first_reply";
+
     // Filter to active campaigns everywhere (rule: had spend in last 7 days)
     const dailyFiltered = filterClosets(dailyRaw).filter((r) => isActive(String(r.campaign || "")));
     const dailyAgg = aggBy(dailyFiltered, "date", [
-      "spend", "impressions", "reach", "clicks", "actions_link_click", "actions_lead",
+      "spend", "impressions", "reach", "clicks", "actions_link_click", "actions_lead", MSG_FIELD, REPLY_FIELD,
     ]);
-    type DailyRow = { date: string; spend: number; impressions: number; reach: number; clicks: number; link_clicks: number; leads: number };
+    type DailyRow = { date: string; spend: number; impressions: number; reach: number; clicks: number; link_clicks: number; leads: number; messages: number; replies: number };
     const daily: DailyRow[] = Object.entries(dailyAgg)
       .map(([date, m]) => ({
         date,
@@ -195,23 +200,26 @@ export async function GET(req: Request) {
         clicks: m.clicks,
         link_clicks: m.actions_link_click,
         leads: m.actions_lead,
+        messages: m[MSG_FIELD],
+        replies: m[REPLY_FIELD],
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
     const priorFiltered = filterClosets(priorRaw).filter((r) => isActive(String(r.campaign || "")));
-    const prior = priorFiltered.reduce<{ spend: number; impressions: number; leads: number }>(
+    const prior = priorFiltered.reduce<{ spend: number; impressions: number; leads: number; messages: number }>(
       (acc, r) => {
         acc.spend += num(r.spend);
         acc.impressions += num(r.impressions);
         acc.leads += num(r.actions_lead);
+        acc.messages += num(r[MSG_FIELD]);
         return acc;
       },
-      { spend: 0, impressions: 0, leads: 0 }
+      { spend: 0, impressions: 0, leads: 0, messages: 0 }
     );
 
     const campaignFiltered = filterClosets(campaignRaw).filter((r) => isActive(String(r.campaign || "")));
     const campaignAgg = aggBy(campaignFiltered, "campaign", [
-      "spend", "impressions", "clicks", "actions_lead",
+      "spend", "impressions", "clicks", "actions_lead", MSG_FIELD, REPLY_FIELD,
     ]);
     const campaignBreakdown = Object.entries(campaignAgg)
       .map(([name, m]) => ({
@@ -219,7 +227,10 @@ export async function GET(req: Request) {
         spend: m.spend,
         impressions: m.impressions,
         leads: m.actions_lead,
+        messages: m[MSG_FIELD],
+        replies: m[REPLY_FIELD],
         cpl: m.actions_lead > 0 ? m.spend / m.actions_lead : null,
+        cpm_msg: m[MSG_FIELD] > 0 ? m.spend / m[MSG_FIELD] : null,
       }))
       .sort((a, b) => b.spend - a.spend);
 
@@ -227,7 +238,7 @@ export async function GET(req: Request) {
     // Aggregate by (campaign, adset_name) so each ad set is counted once.
     type AdsetAgg = {
       campaign: string; name: string; spend: number; impressions: number; reach: number;
-      frequency: number; clicks: number; link_clicks: number; leads: number;
+      frequency: number; clicks: number; link_clicks: number; leads: number; messages: number; replies: number;
     };
     const adsetMap = new Map<string, AdsetAgg>();
     for (const r of filterClosets(adsetRaw)) {
@@ -241,12 +252,14 @@ export async function GET(req: Request) {
         spend: num(r.spend), impressions: num(r.impressions), reach: num(r.reach),
         frequency: num(r.frequency), clicks: num(r.clicks),
         link_clicks: num(r.actions_link_click), leads: num(r.actions_lead),
+        messages: num(r[MSG_FIELD]), replies: num(r[REPLY_FIELD]),
       };
       if (!ex) adsetMap.set(k, row);
       else {
         ex.spend += row.spend; ex.impressions += row.impressions; ex.reach += row.reach;
         ex.frequency = Math.max(ex.frequency, row.frequency);
-        ex.clicks += row.clicks; ex.link_clicks += row.link_clicks; ex.leads += row.leads;
+        ex.clicks += row.clicks; ex.link_clicks += row.link_clicks;
+        ex.leads += row.leads; ex.messages += row.messages; ex.replies += row.replies;
       }
     }
     const adsets = Array.from(adsetMap.values())
@@ -256,6 +269,7 @@ export async function GET(req: Request) {
         ctr: a.impressions > 0 ? a.clicks / a.impressions : 0,
         cpc: a.clicks > 0 ? a.spend / a.clicks : 0,
         cpl: a.leads > 0 ? a.spend / a.leads : null,
+        cpm_msg: a.messages > 0 ? a.spend / a.messages : null,  // Costo por Mensaje WhatsApp — Amudar's primary CPL
       }));
 
     // === Budget per ad set (used for deep recommendations) ===
@@ -339,32 +353,67 @@ export async function GET(req: Request) {
     const leadsYesterday = dailyLeadsByCampaign.find((d) => d.date === yesterdayStr)?.total || 0;
 
     // === Compute aggregates ===
-    const total30d = daily.reduce<{ spend: number; impressions: number; reach_daily_sum: number; clicks: number; leads: number }>(
+    const total30d = daily.reduce<{ spend: number; impressions: number; reach_daily_sum: number; clicks: number; leads: number; messages: number; replies: number }>(
       (acc, d) => {
         acc.spend += d.spend;
         acc.impressions += d.impressions;
         acc.reach_daily_sum += d.reach;
         acc.clicks += d.clicks;
         acc.leads += d.leads;
+        acc.messages += d.messages;
+        acc.replies += d.replies;
         return acc;
       },
-      { spend: 0, impressions: 0, reach_daily_sum: 0, clicks: 0, leads: 0 }
+      { spend: 0, impressions: 0, reach_daily_sum: 0, clicks: 0, leads: 0, messages: 0, replies: 0 }
     );
 
+    // Primary KPI for Amudar = cost per WhatsApp message. cpl (form leads) is secondary.
     const cpl = total30d.leads > 0 ? total30d.spend / total30d.leads : 0;
+    const cpMessage = total30d.messages > 0 ? total30d.spend / total30d.messages : 0;
     const cpm = total30d.impressions > 0 ? (total30d.spend / total30d.impressions) * 1000 : 0;
     const ctr = total30d.impressions > 0 ? total30d.clicks / total30d.impressions : 0;
 
-    const sumWin = (rows: typeof daily) => rows.reduce<{ spend: number; impressions: number; leads: number }>(
+    const sumWin = (rows: typeof daily) => rows.reduce<{ spend: number; impressions: number; leads: number; messages: number }>(
       (acc, d) => {
-        acc.spend += d.spend; acc.impressions += d.impressions; acc.leads += d.leads; return acc;
+        acc.spend += d.spend; acc.impressions += d.impressions; acc.leads += d.leads; acc.messages += d.messages; return acc;
       },
-      { spend: 0, impressions: 0, leads: 0 }
+      { spend: 0, impressions: 0, leads: 0, messages: 0 }
     );
     const last7 = sumWin(daily.slice(-7));
     const prev7 = sumWin(daily.slice(-14, -7));
 
     const pct = (n: number, p: number) => (p ? ((n - p) / p) * 100 : 0);
+
+    // === Week-over-week chart data (last 8 weeks of messages + spend) ===
+    type WeekBucket = { weekStart: string; spend: number; messages: number; leads: number };
+    const weekBuckets: WeekBucket[] = [];
+    if (daily.length > 0) {
+      // Group daily data into rolling 7-day buckets ending at the most recent date
+      const endDate = new Date(daily[daily.length - 1].date);
+      for (let w = 0; w < 8; w++) {
+        const weekEnd = new Date(endDate); weekEnd.setDate(endDate.getDate() - w * 7);
+        const weekStart = new Date(weekEnd); weekStart.setDate(weekEnd.getDate() - 6);
+        const inRange = daily.filter((d) => {
+          const dDate = new Date(d.date);
+          return dDate >= weekStart && dDate <= weekEnd;
+        });
+        if (inRange.length === 0) continue;
+        weekBuckets.unshift({
+          weekStart: weekStart.toISOString().slice(0, 10),
+          spend: inRange.reduce((s, d) => s + d.spend, 0),
+          messages: inRange.reduce((s, d) => s + d.messages, 0),
+          leads: inRange.reduce((s, d) => s + d.leads, 0),
+        });
+      }
+    }
+    const weekOverWeek = {
+      weeks: weekBuckets,
+      latestMessages: weekBuckets[weekBuckets.length - 1]?.messages || 0,
+      previousMessages: weekBuckets[weekBuckets.length - 2]?.messages || 0,
+      growthPct: weekBuckets.length >= 2
+        ? pct(weekBuckets[weekBuckets.length - 1].messages, weekBuckets[weekBuckets.length - 2].messages)
+        : 0,
+    };
 
     // === DEEP RECOMMENDATIONS (budget-aware) ===
     // Thresholds in COP (Amudar account). $15 USD/day ≈ 60,000 COP/day × 30 = 1,800,000 COP/mo
@@ -375,12 +424,15 @@ export async function GET(req: Request) {
     const statusByCampaignName = new Map(campaignStatuses.map((s) => [s.name, s]));
 
     type AdsetAudit = {
-      campaign: string; name: string; cpl: number | null; leads: number; spend: number;
+      campaign: string; name: string;
+      cpl: number | null; cpMessage: number | null;
+      leads: number; messages: number; replies: number; spend: number;
       dailyBudget: number; monthlyBudget: number;
       category: "winner" | "borderline" | "loser" | "learning"; effectiveStatus: string;
     };
 
-    // Per ad set classification — thresholds RELATIVE to account avg CPL (vertical-agnostic)
+    // Per ad set classification — uses MESSAGES (WhatsApp) not form leads as primary metric.
+    // Thresholds RELATIVE to account avg cost-per-message (vertical-agnostic).
     const adsetAudits: AdsetAudit[] = adsets.map((a) => {
       const b = budgetByAdset.get(`${a.campaign}||${a.name}`);
       const dailyBudget = b?.adsetDaily || b?.campaignDaily || 0;
@@ -388,11 +440,13 @@ export async function GET(req: Request) {
       const camStatus = statusByCampaignName.get(a.campaign);
       let category: AdsetAudit["category"];
       if (camStatus?.label === "learning") category = "learning";
-      else if (a.cpl !== null && cpl > 0 && a.cpl <= cpl && a.leads >= 5) category = "winner";
-      else if ((a.cpl !== null && cpl > 0 && a.cpl > cpl * 2) || (a.leads === 0 && a.spend > MIN_SPEND_FOR_LOSER)) category = "loser";
+      else if (a.cpm_msg !== null && cpMessage > 0 && a.cpm_msg <= cpMessage && a.messages >= 10) category = "winner";
+      else if ((a.cpm_msg !== null && cpMessage > 0 && a.cpm_msg > cpMessage * 3) || (a.messages === 0 && a.leads === 0 && a.spend > MIN_SPEND_FOR_LOSER)) category = "loser";
       else category = "borderline";
       return {
-        campaign: a.campaign, name: a.name, cpl: a.cpl, leads: a.leads, spend: a.spend,
+        campaign: a.campaign, name: a.name,
+        cpl: a.cpl, cpMessage: a.cpm_msg,
+        leads: a.leads, messages: a.messages, replies: a.replies, spend: a.spend,
         dailyBudget, monthlyBudget, category, effectiveStatus: b?.effectiveStatus || "",
       };
     });
@@ -580,28 +634,42 @@ export async function GET(req: Request) {
         impressions: total30d.impressions,
         reach_daily_sum: total30d.reach_daily_sum,
         leads: total30d.leads,
+        messages: total30d.messages,
+        replies: total30d.replies,
         clicks: total30d.clicks,
         ctr,
         cpl,
+        cpMessage,
         cpm,
       },
       monthOverMonth: {
-        current: { label: `Últimos ${rangeDays} días`, spend: total30d.spend, impressions: total30d.impressions, leads: total30d.leads, cpl },
-        prior: { label: `${rangeDays} días previos`, spend: prior.spend, impressions: prior.impressions, leads: prior.leads, cpl: prior.leads > 0 ? prior.spend / prior.leads : 0 },
+        current: { label: `Últimos ${rangeDays} días`, spend: total30d.spend, impressions: total30d.impressions, leads: total30d.leads, messages: total30d.messages, cpl, cpMessage },
+        prior: {
+          label: `${rangeDays} días previos`,
+          spend: prior.spend, impressions: prior.impressions, leads: prior.leads, messages: prior.messages,
+          cpl: prior.leads > 0 ? prior.spend / prior.leads : 0,
+          cpMessage: prior.messages > 0 ? prior.spend / prior.messages : 0,
+        },
         deltas: {
           spend: pct(total30d.spend, prior.spend),
           impressions: pct(total30d.impressions, prior.impressions),
           leads: pct(total30d.leads, prior.leads),
+          messages: pct(total30d.messages, prior.messages),
           cpl: pct(cpl, prior.leads > 0 ? prior.spend / prior.leads : 0),
+          cpMessage: pct(cpMessage, prior.messages > 0 ? prior.spend / prior.messages : 0),
         },
       },
       last7vsPrev7: {
         spend: { now: last7.spend, prev: prev7.spend, pct: pct(last7.spend, prev7.spend) },
         leads: { now: last7.leads, prev: prev7.leads, pct: pct(last7.leads, prev7.leads) },
+        messages: { now: last7.messages, prev: prev7.messages, pct: pct(last7.messages, prev7.messages) },
         impressions: { now: last7.impressions, prev: prev7.impressions, pct: pct(last7.impressions, prev7.impressions) },
         cpl_now: last7.leads > 0 ? last7.spend / last7.leads : 0,
         cpl_prev: prev7.leads > 0 ? prev7.spend / prev7.leads : 0,
+        cpMessage_now: last7.messages > 0 ? last7.spend / last7.messages : 0,
+        cpMessage_prev: prev7.messages > 0 ? prev7.spend / prev7.messages : 0,
       },
+      weekOverWeek,
       campaignBreakdown30d: campaignBreakdown,
       daily,
       adsets,
