@@ -40,9 +40,9 @@ type MetaData = {
   topAds: { name: string; adset: string; spend: number; impressions: number; clicks: number; link_clicks: number; leads: number; messages: number; ctr: number; cpc: number; cpl: number | null }[];
   activeCampaigns: string[];
   campaignStatuses: CampaignStatus[];
-  dailyLeadsByCampaign: { date: string; total: number; byCampaign: Record<string, number> }[];
-  leadsToday: number;
-  leadsYesterday: number;
+  dailyMessagesByCampaign: { date: string; total: number; byCampaign: Record<string, number> }[];
+  messagesToday: number;
+  messagesYesterday: number;
   creativeRefresh: {
     recentAdsCount: number;
     newestAdDays: number;
@@ -134,7 +134,7 @@ declare global {
   interface Window { Chart?: ChartLib }
 }
 
-type Section = "resumen" | "leads" | "campanas" | "logros" | "tendencias" | "recomendaciones";
+type Section = "resumen" | "conversaciones" | "crecimiento" | "campanas" | "logros" | "tendencias" | "recomendaciones";
 
 // COP currency formatting (no decimals — COP rarely needs them at these magnitudes)
 const fmtCurr = (n: number) => "$" + Math.round(n).toLocaleString("es-CO");
@@ -149,12 +149,13 @@ const GOOGLE_SECTIONS: { id: Section; label: string; Icon: typeof LayoutDashboar
 ];
 
 const SECTIONS: { id: Section; label: string; Icon: typeof LayoutDashboard }[] = [
-  { id: "resumen",         label: "Resumen",          Icon: LayoutDashboard },
-  { id: "leads",           label: "Leads Diarios",    Icon: CalendarDays },
-  { id: "campanas",        label: "Campañas",         Icon: Target },
-  { id: "logros",          label: "Logros",           Icon: Trophy },
-  { id: "tendencias",      label: "Tendencias",       Icon: TrendingUp },
-  { id: "recomendaciones", label: "Recomendaciones",  Icon: Lightbulb },
+  { id: "resumen",         label: "Resumen",                  Icon: LayoutDashboard },
+  { id: "conversaciones",  label: "Conversaciones Diarias",   Icon: CalendarDays },
+  { id: "crecimiento",     label: "Crecimiento Semanal",      Icon: TrendingUp },
+  { id: "campanas",        label: "Campañas",                 Icon: Target },
+  { id: "logros",          label: "Logros",                   Icon: Trophy },
+  { id: "tendencias",      label: "Tendencias",               Icon: TrendingUp },
+  { id: "recomendaciones", label: "Recomendaciones",          Icon: Lightbulb },
 ];
 
 function StatusBadge({ status }: { status: CampaignStatus | undefined }) {
@@ -241,11 +242,11 @@ export default function Dashboard() {
       localStorage.setItem("amudar_dash_snapshot", JSON.stringify({
         savedAt: new Date().toISOString(),
         campaignStatuses: m.campaignStatuses,
-        adsets: m.adsets.map((a: { name: string; spend: number; leads: number; cpl: number | null }) =>
-          ({ name: a.name, spend: a.spend, leads: a.leads, cpl: a.cpl })),
-        cpl: m.totals30d.cpl,
-        leads: m.totals30d.leads,
-        leadsToday: m.leadsToday,
+        adsets: m.adsets.map((a: { name: string; spend: number; messages: number; cpm_msg: number | null }) =>
+          ({ name: a.name, spend: a.spend, messages: a.messages, cpm_msg: a.cpm_msg })),
+        cpMessage: m.totals30d.cpMessage,
+        messages: m.totals30d.messages,
+        messagesToday: m.messagesToday,
       }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error cargando datos de Meta");
@@ -427,7 +428,8 @@ export default function Dashboard() {
         {platform === "meta" && (
           <>
             {activeSection === "resumen" && <SectionResumen meta={meta} cmp={cmp} cplChange={cplChange} isCrisis={isCrisis} />}
-            {activeSection === "leads" && <SectionLeads meta={meta} />}
+            {activeSection === "conversaciones" && <SectionLeads meta={meta} />}
+            {activeSection === "crecimiento" && <SectionCrecimiento meta={meta} />}
             {activeSection === "campanas" && <SectionCampanas meta={meta} />}
             {activeSection === "logros" && <SectionLogros meta={meta} />}
             {activeSection === "tendencias" && <SectionTendencias meta={meta} t={t} cmp={cmp} cplChange={cplChange} />}
@@ -446,7 +448,7 @@ export default function Dashboard() {
         <div className="bg-slate-100 border border-slate-200 rounded-lg p-4 mt-8 text-xs text-slate-600 leading-relaxed">
           {platform === "meta" ? (
             <>
-              <strong className="text-[#002855]">Fuente:</strong> Meta Ads (Windsor.ai REST API, cuenta {process.env.NEXT_PUBLIC_META_ACCOUNT_ID || "2237520487071255"}) · Métrica de leads: <code className="bg-white px-1 rounded">actions_lead</code> (formulario completado en Facebook). <strong>NO equivale a leads atendidos por el equipo.</strong>
+              <strong className="text-[#002855]">Fuente:</strong> Meta Ads (Windsor.ai REST API, cuenta {process.env.NEXT_PUBLIC_META_ACCOUNT_ID || "2237520487071255"}) · Métrica primaria: <code className="bg-white px-1 rounded">conversaciones de WhatsApp iniciadas</code> (ventana de atribución 7d post-click). Los formularios son métrica secundaria — la cuenta no está optimizada para form leads.
             </>
           ) : (
             <>
@@ -461,35 +463,33 @@ export default function Dashboard() {
 
 /* ============================== SECTIONS ============================== */
 
-function SectionResumen({ meta, cmp, cplChange, isCrisis }: { meta: MetaData; cmp: MetaData["last7vsPrev7"]; cplChange: number; isCrisis: boolean }) {
+function SectionResumen({ meta, cmp }: { meta: MetaData; cmp: MetaData["last7vsPrev7"]; cplChange: number; isCrisis: boolean }) {
   const t = meta.totals30d;
-  const msgChange = cmp.messages.prev > 0 ? ((cmp.messages.now - cmp.messages.prev) / cmp.messages.prev) * 100 : 0;
+  // Period-consistent growth: compare current rangeDays vs previous rangeDays (not 7d-vs-7d when big number = 30d)
+  const periodMsgDelta = meta.monthOverMonth.deltas.messages;
+  const periodCostDelta = meta.monthOverMonth.deltas.cpMessage;
+  const periodSpendDelta = meta.monthOverMonth.deltas.spend;
   return (
     <div className="space-y-6">
-      {/* Hero KPIs — WhatsApp first (Amudar's primary conversion) */}
+      {/* Hero KPIs — same comparison window as the big number to avoid confusion */}
       <div className="grid grid-cols-3 max-md:grid-cols-1 gap-4">
-        <HeroKPI label={`Conversaciones WhatsApp · ${meta.rangeDays}d`} value={fmtNum(t.messages)} delta={msgChange}
-          sub={`Últimos 7 días: ${cmp.messages.now} (vs ${cmp.messages.prev} previos)`}
+        <HeroKPI label={`Conversaciones WhatsApp · ${meta.rangeDays}d`} value={fmtNum(t.messages)} delta={periodMsgDelta}
+          sub={`Período previo (${meta.rangeDays}d): ${meta.monthOverMonth.prior.messages} conversaciones`}
           accent="gold" />
-        <HeroKPI label={`Costo por Conversación · ${meta.rangeDays}d`} value={fmtCurr(t.cpMessage)} lowerBetter
-          sub={`Últimos 7 días: ${fmtCurr(cmp.cpMessage_now)} (vs ${fmtCurr(cmp.cpMessage_prev)} previos)`}
+        <HeroKPI label={`Costo por Conversación · ${meta.rangeDays}d`} value={fmtCurr(t.cpMessage)} delta={periodCostDelta} lowerBetter
+          sub={`Período previo: ${fmtCurr(meta.monthOverMonth.prior.cpMessage)}`}
           accent="dark" />
-        <HeroKPI label={`Inversión ${meta.rangeDays}d`} value={fmtCurr(t.spend)}
-          sub={`promedio ${fmtCurr(t.spend / meta.rangeDays)}/día`} accent="dark" />
+        <HeroKPI label={`Inversión · ${meta.rangeDays}d`} value={fmtCurr(t.spend)} delta={periodSpendDelta}
+          sub={`Promedio ${fmtCurr(t.spend / meta.rangeDays)}/día · período previo ${fmtCurr(meta.monthOverMonth.prior.spend)}`} accent="dark" />
       </div>
 
-      {/* TL;DR */}
-      <div className="bg-white border border-slate-200 border-l-4 border-l-[#2A6FBC] rounded-lg p-6">
-        <h3 className="font-serif text-lg text-[#002855] uppercase tracking-widest mb-3">Resumen ejecutivo</h3>
-        <p className="mb-2 text-slate-900">En los últimos <strong>{meta.rangeDays} días</strong> invertimos <strong>{fmtCurr(t.spend)}</strong> y Meta generó <strong>{t.messages} conversaciones de WhatsApp</strong> a <strong>{fmtCurr(t.cpMessage)}</strong> por conversación. De esas, <strong>{t.replies}</strong> tuvieron primera respuesta del usuario.</p>
-        <p className="mb-2 text-slate-900">Distribución sana — <strong>{fmtNum(t.impressions)}</strong> impresiones con CTR de <strong>{fmtPct(t.ctr)}</strong>. Como referencia secundaria, también se registraron <strong>{t.leads} formularios</strong> a {fmtCurr(t.cpl)} c/u.</p>
-        <p className="text-slate-900 text-sm">Últimos 7 días: <strong>{cmp.messages.now}</strong> conversaciones {msgChange > 0 ? "📈" : msgChange < 0 ? "📉" : ""} ({msgChange > 0 ? "+" : ""}{msgChange.toFixed(0)}% vs semana anterior) · {cmp.leads.now} formularios.</p>
-      </div>
+      {/* Línea de tendencia diaria — growth over time, no period mixing */}
+      <DailyTrendLineChart daily={meta.daily} />
 
-      {/* Week-over-Week growth chart */}
-      <WeekOverWeekChart wow={meta.weekOverWeek} />
+      {/* Resumen ejecutivo enriquecido con WoW context */}
+      <ExecutiveSummary meta={meta} cmp={cmp} />
 
-      {/* Mini-cards: top campaña + ad set + creativo (sorted by messages now) */}
+      {/* Mini-cards: top campaña + ad set + creativo (todos por mensajes) */}
       <div className="grid grid-cols-3 max-md:grid-cols-1 gap-4">
         <MiniWin title="Mejor campaña" Icon={Award} data={meta.campaignBreakdown30d.filter(c => c.cpm_msg).sort((a,b) => (a.cpm_msg ?? 9e9) - (b.cpm_msg ?? 9e9))[0] as { name: string; spend: number; messages: number; cpl: number | null } | undefined} metric="messages" />
         <MiniWin title="Mejor ad set" Icon={Target} data={meta.adsets.filter(a => a.cpm_msg).sort((a,b) => (a.cpm_msg ?? 9e9) - (b.cpm_msg ?? 9e9))[0] as { name: string; spend: number; messages: number; cpl: number | null } | undefined} metric="messages" />
@@ -499,63 +499,281 @@ function SectionResumen({ meta, cmp, cplChange, isCrisis }: { meta: MetaData; cm
   );
 }
 
-function WeekOverWeekChart({ wow }: { wow: MetaData["weekOverWeek"] }) {
-  if (!wow || wow.weeks.length === 0) return null;
-  const maxMsg = Math.max(...wow.weeks.map(w => w.messages), 1);
-  const growth = wow.growthPct;
-  const growthLabel = growth > 0 ? `+${growth.toFixed(0)}% semana vs semana` : growth < 0 ? `${growth.toFixed(0)}% semana vs semana` : "estable";
-  const growthCls = growth > 0 ? "text-green-700 bg-green-50" : growth < 0 ? "text-red-700 bg-red-50" : "text-slate-700 bg-slate-50";
+function ExecutiveSummary({ meta, cmp }: { meta: MetaData; cmp: MetaData["last7vsPrev7"] }) {
+  const t = meta.totals30d;
+  const wow = meta.weekOverWeek;
+  const msgChange = cmp.messages.prev > 0 ? ((cmp.messages.now - cmp.messages.prev) / cmp.messages.prev) * 100 : 0;
+  const periodMsgDelta = meta.monthOverMonth.deltas.messages;
+  const trend = msgChange > 10 ? "📈 creciendo fuerte" : msgChange > 0 ? "📈 creciendo" : msgChange === 0 ? "estable" : msgChange > -10 ? "📉 leve baja" : "📉 bajando";
+  const totalAcrossWeeks = wow.weeks.reduce((s, w) => s + w.messages, 0);
+  const avgPerWeek = wow.weeks.length > 0 ? Math.round(totalAcrossWeeks / wow.weeks.length) : 0;
   return (
-    <div className="bg-white border border-slate-200 rounded-lg p-6">
-      <div className="flex items-start justify-between mb-4 flex-wrap gap-2">
-        <div>
-          <h3 className="font-serif text-lg text-[#002855] mb-1">Conversaciones WhatsApp por semana</h3>
-          <p className="text-xs text-slate-500">Últimas {wow.weeks.length} semanas · Comparativa semana actual vs anterior</p>
-        </div>
-        <div className={`px-3 py-1.5 rounded-full text-xs font-semibold ${growthCls}`}>
-          {growthLabel}
-        </div>
-      </div>
-      <div className="flex items-end gap-3 h-48 mt-6">
-        {wow.weeks.map((w, i) => {
-          const pct = (w.messages / maxMsg) * 100;
-          const isLatest = i === wow.weeks.length - 1;
-          const isPrev = i === wow.weeks.length - 2;
-          const barCls = isLatest ? "bg-[#002855]" : isPrev ? "bg-[#2A6FBC]" : "bg-slate-300";
-          return (
-            <div key={i} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-              <div className="text-sm font-semibold text-[#002855] tabular-nums">{w.messages}</div>
-              <div className="w-full bg-slate-100 rounded-t flex items-end" style={{ height: "75%" }}>
-                <div className={`w-full rounded-t transition-all ${barCls}`} style={{ height: `${pct}%`, minHeight: w.messages > 0 ? "4px" : "0" }} />
-              </div>
-              <div className="text-[10px] text-slate-500 whitespace-nowrap">{new Date(w.weekStart).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex gap-4 mt-4 text-[11px] text-slate-500">
-        <span className="flex items-center gap-1"><span className="w-3 h-3 bg-[#002855] rounded inline-block" /> Semana actual</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 bg-[#2A6FBC] rounded inline-block" /> Semana anterior</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-3 bg-slate-300 rounded inline-block" /> Históricas</span>
+    <div className="bg-white border border-slate-200 border-l-4 border-l-[#2A6FBC] rounded-lg p-6">
+      <h3 className="font-serif text-lg text-[#002855] uppercase tracking-widest mb-3">Resumen ejecutivo</h3>
+      <p className="mb-3 text-slate-900">
+        En los <strong>últimos {meta.rangeDays} días</strong> la cuenta generó <strong>{t.messages} conversaciones de WhatsApp</strong> con una inversión de <strong>{fmtCurr(t.spend)}</strong>. El costo por conversación promedió <strong>{fmtCurr(t.cpMessage)}</strong>. <strong>{t.replies}</strong> de esas conversaciones tuvieron primera respuesta del usuario (engagement real).
+      </p>
+      <p className="mb-3 text-slate-900">
+        <strong>Comparativa de período:</strong> {periodMsgDelta > 0 ? "+" : ""}{periodMsgDelta.toFixed(0)}% en conversaciones vs los {meta.rangeDays} días anteriores ({meta.monthOverMonth.prior.messages} → {t.messages}).
+      </p>
+      <div className="bg-slate-50 border border-slate-200 rounded p-4 mt-4">
+        <h4 className="text-xs uppercase tracking-widest text-slate-500 font-semibold mb-2">Crecimiento semanal — qué decirle al cliente</h4>
+        <ul className="text-sm space-y-1.5 text-slate-900">
+          <li>• <strong>Semana actual:</strong> {cmp.messages.now} conversaciones · {trend} ({msgChange > 0 ? "+" : ""}{msgChange.toFixed(0)}% vs semana anterior con {cmp.messages.prev})</li>
+          <li>• <strong>Promedio últimas {wow.weeks.length} semanas:</strong> {avgPerWeek} conversaciones/semana</li>
+          <li>• <strong>Mejor semana del período:</strong> {Math.max(...wow.weeks.map(w => w.messages), 0)} conversaciones</li>
+          <li>• <strong>Costo por conversación esta semana:</strong> {fmtCurr(cmp.cpMessage_now)} (semana previa: {fmtCurr(cmp.cpMessage_prev)})</li>
+        </ul>
       </div>
     </div>
   );
 }
 
+function DailyTrendLineChart({ daily }: { daily: MetaData["daily"] }) {
+  if (daily.length === 0) return null;
+  // Show last 30 days as a line of messages per day. Smooth growth visualization.
+  const last30 = daily.slice(-30);
+  const max = Math.max(...last30.map(d => d.messages), 1);
+  const w = 100; // viewbox width %
+  const h = 100;
+  const step = w / Math.max(last30.length - 1, 1);
+  const points = last30.map((d, i) => `${(i * step).toFixed(2)},${(h - (d.messages / max) * h * 0.85).toFixed(2)}`).join(" ");
+  const areaPoints = `0,${h} ${points} ${w},${h}`;
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-6">
+      <h3 className="font-serif text-lg text-[#002855] mb-1">Conversaciones diarias · últimos {last30.length} días</h3>
+      <p className="text-xs text-slate-500 mb-4">Crecimiento de conversaciones de WhatsApp día por día (ventana de atribución 7d)</p>
+      <div className="relative" style={{ height: 200 }}>
+        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-full">
+          <defs>
+            <linearGradient id="lineFill" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#2A6FBC" stopOpacity="0.3" />
+              <stop offset="100%" stopColor="#2A6FBC" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <polygon points={areaPoints} fill="url(#lineFill)" />
+          <polyline points={points} fill="none" stroke="#002855" strokeWidth="0.8" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+          {last30.map((d, i) => (
+            <circle key={i} cx={i * step} cy={h - (d.messages / max) * h * 0.85} r="0.8" fill="#002855" vectorEffect="non-scaling-stroke" />
+          ))}
+        </svg>
+      </div>
+      <div className="flex justify-between text-[10px] text-slate-500 mt-2">
+        <span>{new Date(last30[0].date).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</span>
+        <span className="font-semibold text-[#002855]">Máx: {max} conversaciones en un día</span>
+        <span>{new Date(last30[last30.length - 1].date).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</span>
+      </div>
+    </div>
+  );
+}
+
+function SectionCrecimiento({ meta }: { meta: MetaData }) {
+  const t = meta.totals30d;
+  const wow = meta.weekOverWeek;
+  const periodMsgDelta = meta.monthOverMonth.deltas.messages;
+
+  // Total messages by campaign across the rangeDays period (for pie chart)
+  const byCampaign = meta.campaignBreakdown30d
+    .filter(c => c.messages > 0)
+    .map(c => ({ name: c.name, messages: c.messages, share: 0 }))
+    .sort((a, b) => b.messages - a.messages);
+  const totalMsg = byCampaign.reduce((s, c) => s + c.messages, 0);
+  byCampaign.forEach(c => { c.share = totalMsg > 0 ? (c.messages / totalMsg) * 100 : 0; });
+
+  return (
+    <div className="space-y-6">
+      {/* Big picture KPIs — period vs period */}
+      <div className="grid grid-cols-3 max-md:grid-cols-1 gap-4">
+        <HeroKPI label={`Conversaciones · ${meta.rangeDays}d`} value={fmtNum(t.messages)} delta={periodMsgDelta}
+          sub={`vs ${meta.monthOverMonth.prior.messages} del período previo`} accent="gold" />
+        <HeroKPI label="Semana actual" value={String(wow.latestMessages)} delta={wow.growthPct}
+          sub={`vs ${wow.previousMessages} semana anterior`} accent="dark" />
+        <HeroKPI label={`Promedio/sem · ${wow.weeks.length} sem`} value={String(Math.round(wow.weeks.reduce((s, w) => s + w.messages, 0) / Math.max(wow.weeks.length, 1)))}
+          sub="conversaciones promedio por semana" accent="dark" />
+      </div>
+
+      {/* Line chart de crecimiento semanal */}
+      <WeeklyTrendLineChart wow={wow} />
+
+      {/* Tabla detallada semana por semana */}
+      <div className="bg-white border border-slate-200 rounded-lg p-6 overflow-x-auto">
+        <h3 className="font-serif text-lg text-[#002855] mb-1">Detalle semana por semana</h3>
+        <p className="text-xs text-slate-500 mb-4">Conversaciones, inversión, costo por conversación y % de crecimiento vs semana anterior</p>
+        <table className="w-full text-sm">
+          <thead>
+            <tr>
+              {["Semana desde", "Conversaciones", "Inversión", "Costo/Conv", "Δ vs anterior"].map((h, i) => (
+                <th key={i} className={`p-3 bg-slate-100 text-slate-600 text-xs uppercase tracking-wider font-semibold ${i === 0 ? "text-left" : "text-right"}`}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {wow.weeks.map((w, i) => {
+              const prev = i > 0 ? wow.weeks[i - 1].messages : 0;
+              const delta = prev > 0 ? ((w.messages - prev) / prev) * 100 : null;
+              const cpm = w.messages > 0 ? w.spend / w.messages : null;
+              return (
+                <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="p-3 font-semibold">{new Date(w.weekStart).toLocaleDateString("es-CO", { day: "2-digit", month: "short", year: "numeric" })}</td>
+                  <td className="p-3 text-right tabular-nums font-bold text-[#002855]">{w.messages}</td>
+                  <td className="p-3 text-right tabular-nums">{fmtCurr(w.spend)}</td>
+                  <td className="p-3 text-right tabular-nums">{cpm ? fmtCurr(cpm) : "—"}</td>
+                  <td className="p-3 text-right tabular-nums">
+                    {delta === null ? <span className="text-slate-400">—</span>
+                      : <span className={delta > 0 ? "text-green-700 font-semibold" : delta < 0 ? "text-red-700 font-semibold" : "text-slate-500"}>
+                          {delta > 0 ? "+" : ""}{delta.toFixed(0)}%
+                        </span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pie chart: distribución de conversaciones por campaña */}
+      {byCampaign.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-lg p-6">
+          <h3 className="font-serif text-lg text-[#002855] mb-1">Distribución de conversaciones por campaña</h3>
+          <p className="text-xs text-slate-500 mb-4">De dónde están viniendo las {totalMsg} conversaciones de los últimos {meta.rangeDays} días</p>
+          <div className="grid grid-cols-2 max-md:grid-cols-1 gap-6 items-center">
+            <PieChart segments={byCampaign.map(c => ({ value: c.messages, label: c.name }))} />
+            <div className="space-y-3">
+              {byCampaign.map((c, i) => {
+                const colors = ["#002855", "#2A6FBC", "#7BA7DC", "#B8CCE3"];
+                return (
+                  <div key={i} className="flex items-start gap-3">
+                    <span className="w-3 h-3 rounded mt-1 flex-shrink-0" style={{ backgroundColor: colors[i % colors.length] }} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm text-[#002855] truncate">{c.name}</div>
+                      <div className="text-xs text-slate-600">{c.messages} conversaciones · <strong>{c.share.toFixed(0)}%</strong> del total</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Resumen comparativo de períodos largos */}
+      <div className="bg-[#002855] text-white rounded-lg p-6">
+        <h3 className="font-serif text-lg mb-1">Visión grande · {meta.rangeDays} días vs período previo</h3>
+        <p className="text-xs text-white/70 mb-4">Usa el selector arriba (30/60/90d) para cambiar la ventana de comparación</p>
+        <div className="grid grid-cols-2 max-md:grid-cols-1 gap-6">
+          <div>
+            <div className="text-xs uppercase tracking-widest text-white/60 mb-1">Período actual ({meta.rangeDays}d)</div>
+            <div className="font-serif text-3xl text-white mb-1">{t.messages} conversaciones</div>
+            <div className="text-sm text-white/80">{fmtCurr(t.spend)} invertidos · {fmtCurr(t.cpMessage)}/conv</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-widest text-white/60 mb-1">Período previo ({meta.rangeDays}d antes)</div>
+            <div className="font-serif text-3xl text-white/80 mb-1">{meta.monthOverMonth.prior.messages} conversaciones</div>
+            <div className="text-sm text-white/60">{fmtCurr(meta.monthOverMonth.prior.spend)} invertidos · {fmtCurr(meta.monthOverMonth.prior.cpMessage)}/conv</div>
+          </div>
+        </div>
+        <div className="mt-4 pt-4 border-t border-white/20">
+          <div className="text-xs uppercase tracking-widest text-[#7BA7DC] font-semibold mb-1">Crecimiento de conversaciones</div>
+          <div className="font-serif text-2xl">{periodMsgDelta > 0 ? "+" : ""}{periodMsgDelta.toFixed(0)}% vs período anterior</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WeeklyTrendLineChart({ wow }: { wow: MetaData["weekOverWeek"] }) {
+  if (!wow || wow.weeks.length === 0) return null;
+  const max = Math.max(...wow.weeks.map(w => w.messages), 1);
+  const w = 100, h = 100;
+  const step = w / Math.max(wow.weeks.length - 1, 1);
+  const points = wow.weeks.map((wk, i) => `${(i * step).toFixed(2)},${(h - (wk.messages / max) * h * 0.85).toFixed(2)}`).join(" ");
+  const areaPoints = `0,${h} ${points} ${w},${h}`;
+  const growth = wow.growthPct;
+  const growthCls = growth > 0 ? "text-green-700 bg-green-50" : growth < 0 ? "text-red-700 bg-red-50" : "text-slate-700 bg-slate-50";
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-6">
+      <div className="flex items-start justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <h3 className="font-serif text-lg text-[#002855] mb-1">Tendencia semanal de conversaciones</h3>
+          <p className="text-xs text-slate-500">Últimas {wow.weeks.length} semanas</p>
+        </div>
+        <div className={`px-3 py-1.5 rounded-full text-xs font-semibold ${growthCls}`}>
+          {growth > 0 ? "+" : ""}{growth.toFixed(0)}% semana vs semana
+        </div>
+      </div>
+      <div className="relative" style={{ height: 240 }}>
+        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-full">
+          <defs>
+            <linearGradient id="weekLineFill" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#2A6FBC" stopOpacity="0.35" />
+              <stop offset="100%" stopColor="#2A6FBC" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <polygon points={areaPoints} fill="url(#weekLineFill)" />
+          <polyline points={points} fill="none" stroke="#002855" strokeWidth="1" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+          {wow.weeks.map((wk, i) => (
+            <circle key={i} cx={i * step} cy={h - (wk.messages / max) * h * 0.85} r="1.4" fill="#002855" vectorEffect="non-scaling-stroke" />
+          ))}
+        </svg>
+        {/* Value labels above each point */}
+        <div className="absolute inset-0 flex justify-between items-start pointer-events-none">
+          {wow.weeks.map((wk, i) => (
+            <div key={i} className="text-xs font-semibold text-[#002855] tabular-nums" style={{ marginTop: `${(100 - (wk.messages / max) * 85) * 2.4 - 22}px` }}>
+              {wk.messages}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="flex justify-between text-[10px] text-slate-500 mt-3 pt-3 border-t border-slate-100">
+        {wow.weeks.map((wk, i) => (
+          <span key={i}>{new Date(wk.weekStart).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PieChart({ segments }: { segments: { value: number; label: string }[] }) {
+  const total = segments.reduce((s, x) => s + x.value, 0);
+  if (total === 0) return null;
+  const colors = ["#002855", "#2A6FBC", "#7BA7DC", "#B8CCE3"];
+  let cumulative = 0;
+  const radius = 40;
+  const cx = 50, cy = 50;
+  const paths = segments.map((seg, i) => {
+    const startAngle = (cumulative / total) * 2 * Math.PI - Math.PI / 2;
+    cumulative += seg.value;
+    const endAngle = (cumulative / total) * 2 * Math.PI - Math.PI / 2;
+    const largeArc = (endAngle - startAngle) > Math.PI ? 1 : 0;
+    const x1 = cx + radius * Math.cos(startAngle);
+    const y1 = cy + radius * Math.sin(startAngle);
+    const x2 = cx + radius * Math.cos(endAngle);
+    const y2 = cy + radius * Math.sin(endAngle);
+    return <path key={i} d={`M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`} fill={colors[i % colors.length]} />;
+  });
+  return (
+    <svg viewBox="0 0 100 100" className="w-full max-w-[260px] mx-auto" role="img" aria-label="Distribución por campaña">
+      {paths}
+    </svg>
+  );
+}
+
 function SectionLeads({ meta }: { meta: MetaData }) {
-  const weekTotal = meta.dailyLeadsByCampaign.slice(0, 7).reduce((s, d) => s + d.total, 0);
+  const weekTotal = meta.dailyMessagesByCampaign.slice(0, 7).reduce((s, d) => s + d.total, 0);
+  const prevWeekTotal = meta.dailyMessagesByCampaign.slice(7, 14).reduce((s, d) => s + d.total, 0);
+  const weekGrowth = prevWeekTotal > 0 ? ((weekTotal - prevWeekTotal) / prevWeekTotal) * 100 : 0;
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-4 max-md:grid-cols-2 gap-4">
-        <HeroKPI label="Hoy" value={String(meta.leadsToday)} sub="formularios" accent="gold" />
-        <HeroKPI label="Ayer" value={String(meta.leadsYesterday)} sub="formularios" accent="dark" />
-        <HeroKPI label="Esta semana" value={String(weekTotal)} sub="últimos 7 días" accent="dark" />
+        <HeroKPI label="Hoy" value={String(meta.messagesToday)} sub="conversaciones WhatsApp" accent="gold" />
+        <HeroKPI label="Ayer" value={String(meta.messagesYesterday)} sub="conversaciones WhatsApp" accent="dark" />
+        <HeroKPI label="Esta semana" value={String(weekTotal)} delta={weekGrowth} sub={`últimos 7d (vs ${prevWeekTotal} semana anterior)`} accent="dark" />
         <HeroKPI label="Campañas activas" value={String(meta.activeCampaigns.length)} sub="corriendo ahora" accent="dark" />
       </div>
 
       <div className="bg-white border border-slate-200 rounded-lg p-6 overflow-x-auto">
-        <h3 className="font-serif text-lg mb-1">Leads diarios por campaña</h3>
-        <p className="text-xs text-slate-500 mb-4">Últimos 14 días · solo campañas actualmente activas</p>
+        <h3 className="font-serif text-lg mb-1">Conversaciones diarias por campaña</h3>
+        <p className="text-xs text-slate-500 mb-4">Últimos 14 días · WhatsApp conversations iniciadas, atribuidas al día del click (ventana 7d) · solo campañas activas</p>
         <table className="w-full text-sm">
           <thead>
             <tr>
@@ -567,7 +785,7 @@ function SectionLeads({ meta }: { meta: MetaData }) {
             </tr>
           </thead>
           <tbody>
-            {meta.dailyLeadsByCampaign.slice(0, 14).map((row, i) => {
+            {meta.dailyMessagesByCampaign.slice(0, 14).map((row, i) => {
               const isToday = row.date === new Date().toISOString().slice(0, 10);
               const isYesterday = row.date === new Date(Date.now() - 86400000).toISOString().slice(0, 10);
               const label = isToday ? "HOY" : isYesterday ? "Ayer" : new Date(row.date).toLocaleDateString("es-CO", { weekday: "short", day: "2-digit", month: "short" });
@@ -590,33 +808,59 @@ function SectionLeads({ meta }: { meta: MetaData }) {
 
 function SectionCampanas({ meta }: { meta: MetaData }) {
   const statusByName = new Map(meta.campaignStatuses.map(s => [s.name, s]));
+  const avgCpMsg = meta.totals30d.cpMessage || 0;
+
+  // Generate brief data-driven explanation per campaign
+  const explainCampaign = (c: typeof meta.campaignBreakdown30d[number]): string => {
+    if (c.messages === 0) return "Sin conversaciones aún. Probablemente está optimizando entrega o creatividad no resuena. Revisar próxima semana.";
+    if (avgCpMsg > 0 && c.cpm_msg && c.cpm_msg <= avgCpMsg * 0.8) return `Generando conversaciones a costo bajo (${fmtCurr(c.cpm_msg)} c/u, mejor que promedio ${fmtCurr(avgCpMsg)}). Mantener y considerar escalar presupuesto.`;
+    if (avgCpMsg > 0 && c.cpm_msg && c.cpm_msg > avgCpMsg * 2) return `Costo por conversación elevado (${fmtCurr(c.cpm_msg)} vs ${fmtCurr(avgCpMsg)} promedio). Refrescar creativo o revisar audiencia.`;
+    return `Performance en línea con el promedio: ${c.messages} conversaciones a ${c.cpm_msg ? fmtCurr(c.cpm_msg) : "—"} c/u.`;
+  };
+
   return (
     <div className="space-y-6">
-      <div className="bg-white border border-slate-200 rounded-lg p-6 overflow-x-auto">
-        <h3 className="font-serif text-lg mb-4">Desglose por Campaña · últimos {meta.rangeDays} días</h3>
-        <table className="w-full text-sm">
-          <thead>
-            <tr>
-              {["Campaña", "Estado", "Inversión", "Formularios", "CPL"].map((h, i) => (
-                <th key={i} className={`p-3 bg-slate-100 text-slate-600 text-xs uppercase tracking-wider font-semibold ${i === 0 ? "text-left" : "text-right"}`}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {meta.campaignBreakdown30d.map((c, i) => {
-              const dot = c.cpl && c.cpl < 50 ? "bg-green-600" : c.cpl && c.cpl < 100 ? "bg-amber-600" : "bg-red-600";
-              return (
-                <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="p-3 font-semibold"><span className={`inline-block w-2 h-2 rounded-full ${dot} mr-2`}></span>{c.name}</td>
-                  <td className="p-3"><StatusBadge status={statusByName.get(c.name)} /></td>
-                  <td className="p-3 text-right tabular-nums">{fmtCurr(c.spend)}</td>
-                  <td className="p-3 text-right tabular-nums"><strong>{fmtNum(c.leads)}</strong></td>
-                  <td className="p-3 text-right tabular-nums"><strong>{c.cpl ? fmtCurrDec(c.cpl) : "—"}</strong></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className="bg-white border border-slate-200 rounded-lg p-6">
+        <h3 className="font-serif text-lg mb-1">Desglose por Campaña · últimos {meta.rangeDays} días</h3>
+        <p className="text-xs text-slate-500 mb-4">Métrica primaria: conversaciones de WhatsApp iniciadas. Form leads son secundarios — no es el objetivo de la cuenta.</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr>
+                {["Campaña", "Estado", "Inversión", "Conversaciones", "Costo/Conv"].map((h, i) => (
+                  <th key={i} className={`p-3 bg-slate-100 text-slate-600 text-xs uppercase tracking-wider font-semibold ${i === 0 ? "text-left" : "text-right"}`}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {meta.campaignBreakdown30d.map((c, i) => {
+                const dot = c.cpm_msg && avgCpMsg > 0 && c.cpm_msg <= avgCpMsg ? "bg-green-600"
+                  : c.cpm_msg && avgCpMsg > 0 && c.cpm_msg <= avgCpMsg * 2 ? "bg-amber-600"
+                  : "bg-red-600";
+                return (
+                  <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
+                    <td className="p-3 font-semibold"><span className={`inline-block w-2 h-2 rounded-full ${dot} mr-2`}></span>{c.name}</td>
+                    <td className="p-3"><StatusBadge status={statusByName.get(c.name)} /></td>
+                    <td className="p-3 text-right tabular-nums">{fmtCurr(c.spend)}</td>
+                    <td className="p-3 text-right tabular-nums"><strong>{fmtNum(c.messages)}</strong></td>
+                    <td className="p-3 text-right tabular-nums"><strong>{c.cpm_msg ? fmtCurr(c.cpm_msg) : "—"}</strong></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Brief explanation per campaign */}
+        <div className="mt-5 space-y-2">
+          <h4 className="text-xs uppercase tracking-widest text-slate-500 font-semibold mb-2">Qué está pasando en cada campaña</h4>
+          {meta.campaignBreakdown30d.map((c, i) => (
+            <div key={i} className="text-sm bg-slate-50 border border-slate-200 rounded p-3">
+              <strong className="text-[#002855]">{c.name}</strong>
+              <p className="text-slate-700 text-xs mt-1">{explainCampaign(c)}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-lg p-6 overflow-x-auto">
@@ -624,14 +868,16 @@ function SectionCampanas({ meta }: { meta: MetaData }) {
         <table className="w-full text-sm">
           <thead>
             <tr>
-              {["Ad Set", "Inversión", "Reach", "Freq", "CTR", "CPC", "Leads", "CPL"].map((h, i) => (
+              {["Ad Set", "Inversión", "Reach", "Freq", "CTR", "CPC", "Conversaciones", "Costo/Conv"].map((h, i) => (
                 <th key={i} className={`p-3 bg-slate-100 text-slate-600 text-xs uppercase tracking-wider font-semibold ${i === 0 ? "text-left" : "text-right"}`}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {[...meta.adsets].sort((a, b) => (b.leads || 0) - (a.leads || 0)).map((a, i) => {
-              const status = a.cpl && a.cpl < 40 ? "bg-green-600" : a.cpl && a.cpl < 80 ? "bg-amber-600" : "bg-red-600";
+            {[...meta.adsets].sort((a, b) => (b.messages || 0) - (a.messages || 0)).map((a, i) => {
+              const status = a.cpm_msg && avgCpMsg > 0 && a.cpm_msg <= avgCpMsg ? "bg-green-600"
+                : a.cpm_msg && avgCpMsg > 0 && a.cpm_msg <= avgCpMsg * 2 ? "bg-amber-600"
+                : "bg-red-600";
               return (
                 <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="p-3 font-semibold"><span className={`inline-block w-2 h-2 rounded-full ${status} mr-2`}></span>{a.name}</td>
@@ -639,9 +885,9 @@ function SectionCampanas({ meta }: { meta: MetaData }) {
                   <td className="p-3 text-right tabular-nums">{fmtNum(a.reach)}</td>
                   <td className="p-3 text-right tabular-nums">{a.frequency.toFixed(2)}</td>
                   <td className="p-3 text-right tabular-nums">{fmtPct(a.ctr)}</td>
-                  <td className="p-3 text-right tabular-nums">{fmtCurrDec(a.cpc)}</td>
-                  <td className="p-3 text-right tabular-nums">{a.leads || 0}</td>
-                  <td className="p-3 text-right tabular-nums"><strong>{a.cpl ? fmtCurrDec(a.cpl) : "—"}</strong></td>
+                  <td className="p-3 text-right tabular-nums">{fmtCurr(a.cpc)}</td>
+                  <td className="p-3 text-right tabular-nums">{a.messages || 0}</td>
+                  <td className="p-3 text-right tabular-nums"><strong>{a.cpm_msg ? fmtCurr(a.cpm_msg) : "—"}</strong></td>
                 </tr>
               );
             })}
@@ -654,16 +900,19 @@ function SectionCampanas({ meta }: { meta: MetaData }) {
         <table className="w-full text-sm">
           <thead>
             <tr>
-              {["Anuncio", "Ad Set", "Inversión", "CTR", "Leads", "CPL", "Status"].map((h, i) => (
-                <th key={i} className={`p-3 bg-slate-100 text-slate-600 text-xs uppercase tracking-wider font-semibold ${i === 0 || i === 1 || i === 6 ? "text-left" : "text-right"}`}>{h}</th>
+              {["Anuncio", "Ad Set", "Inversión", "CTR", "Conversaciones", "Status"].map((h, i) => (
+                <th key={i} className={`p-3 bg-slate-100 text-slate-600 text-xs uppercase tracking-wider font-semibold ${i === 0 || i === 1 || i === 5 ? "text-left" : "text-right"}`}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {[...meta.topAds].sort((a, b) => (b.leads || 0) - (a.leads || 0)).map((a, i) => {
-              const status = a.cpl && a.cpl < 30 ? "bg-green-600" : a.cpl && a.cpl < 60 ? "bg-amber-600" : "bg-red-600";
-              const badge = a.leads >= 30 ? <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-xs font-semibold uppercase tracking-wider">Winner</span>
-                : !a.leads || (a.cpl && a.cpl > 100) ? <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-xs font-semibold uppercase tracking-wider">Loser</span>
+            {[...meta.topAds].sort((a, b) => (b.messages || 0) - (a.messages || 0)).map((a, i) => {
+              const adCpMsg = a.messages > 0 ? a.spend / a.messages : null;
+              const status = adCpMsg && avgCpMsg > 0 && adCpMsg <= avgCpMsg ? "bg-green-600"
+                : adCpMsg && avgCpMsg > 0 && adCpMsg <= avgCpMsg * 2 ? "bg-amber-600"
+                : "bg-red-600";
+              const badge = a.messages >= 20 ? <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-xs font-semibold uppercase tracking-wider">Ganador</span>
+                : !a.messages ? <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-xs font-semibold uppercase tracking-wider">Sin conv.</span>
                 : <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs font-semibold uppercase tracking-wider">OK</span>;
               return (
                 <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
@@ -671,8 +920,7 @@ function SectionCampanas({ meta }: { meta: MetaData }) {
                   <td className="p-3 text-slate-600 text-xs">{a.adset}</td>
                   <td className="p-3 text-right tabular-nums">{fmtCurr(a.spend)}</td>
                   <td className="p-3 text-right tabular-nums">{fmtPct(a.ctr)}</td>
-                  <td className="p-3 text-right tabular-nums"><strong>{a.leads || 0}</strong></td>
-                  <td className="p-3 text-right tabular-nums"><strong>{a.cpl ? fmtCurrDec(a.cpl) : "—"}</strong></td>
+                  <td className="p-3 text-right tabular-nums"><strong>{a.messages || 0}</strong></td>
                   <td className="p-3">{badge}</td>
                 </tr>
               );
@@ -685,10 +933,11 @@ function SectionCampanas({ meta }: { meta: MetaData }) {
 }
 
 function SectionLogros({ meta }: { meta: MetaData }) {
-  const bestAd = [...meta.topAds].filter(a => (a.leads ?? 0) > 0).sort((a, b) => (b.leads || 0) - (a.leads || 0))[0];
-  const bestAdset = [...meta.adsets].filter(a => (a.leads ?? 0) > 0 && a.cpl).sort((a, b) => (a.cpl ?? 9999) - (b.cpl ?? 9999))[0];
+  const bestAd = [...meta.topAds].filter(a => (a.messages ?? 0) > 0).sort((a, b) => (b.messages || 0) - (a.messages || 0))[0];
+  const bestAdset = [...meta.adsets].filter(a => (a.messages ?? 0) > 0 && a.cpm_msg).sort((a, b) => (a.cpm_msg ?? 9e9) - (b.cpm_msg ?? 9e9))[0];
   const reachGrowth = meta.monthOverMonth.deltas.impressions;
-  const cplDelta = meta.monthOverMonth.deltas.cpl;
+  const cpMsgDelta = meta.monthOverMonth.deltas.cpMessage;
+  const adCpMsg = bestAd && bestAd.messages > 0 ? bestAd.spend / bestAd.messages : null;
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 max-md:grid-cols-1 gap-4">
@@ -698,8 +947,8 @@ function SectionLogros({ meta }: { meta: MetaData }) {
             <div className="font-serif text-2xl text-[#002855] mb-1">{bestAd.name}</div>
             <div className="text-sm text-slate-600 mb-3">en {bestAd.adset}</div>
             <div className="grid grid-cols-3 gap-3 text-sm">
-              <div><div className="text-xs text-slate-500">Leads</div><div className="font-bold text-lg">{bestAd.leads}</div></div>
-              <div><div className="text-xs text-slate-500">CPL</div><div className="font-bold text-lg">{bestAd.cpl ? fmtCurrDec(bestAd.cpl) : "—"}</div></div>
+              <div><div className="text-xs text-slate-500">Conv.</div><div className="font-bold text-lg">{bestAd.messages}</div></div>
+              <div><div className="text-xs text-slate-500">Costo/Conv</div><div className="font-bold text-lg">{adCpMsg ? fmtCurr(adCpMsg) : "—"}</div></div>
               <div><div className="text-xs text-slate-500">CTR</div><div className="font-bold text-lg">{fmtPct(bestAd.ctr)}</div></div>
             </div>
           </div>
@@ -710,8 +959,8 @@ function SectionLogros({ meta }: { meta: MetaData }) {
             <div className="font-serif text-2xl text-[#002855] mb-1">{bestAdset.name}</div>
             <div className="text-sm text-slate-600 mb-3">campaña: {shortName(bestAdset.campaign)}</div>
             <div className="grid grid-cols-3 gap-3 text-sm">
-              <div><div className="text-xs text-slate-500">Leads</div><div className="font-bold text-lg">{bestAdset.leads}</div></div>
-              <div><div className="text-xs text-slate-500">CPL</div><div className="font-bold text-lg">{fmtCurrDec(bestAdset.cpl!)}</div></div>
+              <div><div className="text-xs text-slate-500">Conv.</div><div className="font-bold text-lg">{bestAdset.messages}</div></div>
+              <div><div className="text-xs text-slate-500">Costo/Conv</div><div className="font-bold text-lg">{fmtCurr(bestAdset.cpm_msg!)}</div></div>
               <div><div className="text-xs text-slate-500">Reach</div><div className="font-bold text-lg">{fmtNum(bestAdset.reach)}</div></div>
             </div>
           </div>
@@ -724,19 +973,20 @@ function SectionLogros({ meta }: { meta: MetaData }) {
           <div className="font-serif text-4xl text-[#002855] mb-2">{reachGrowth > 0 ? "+" : ""}{reachGrowth.toFixed(0)}%</div>
           <div className="text-sm text-slate-600">{fmtNum(meta.monthOverMonth.current.impressions)} impresiones vs {fmtNum(meta.monthOverMonth.prior.impressions)} en el período anterior</div>
         </div>
-        <div className={`bg-white border border-slate-200 border-l-4 ${cplDelta < 0 ? "border-l-green-600" : "border-l-amber-600"} rounded-lg p-6`}>
-          <div className="text-xs text-slate-600 uppercase tracking-widest font-semibold mb-2 flex items-center gap-1.5"><Award size={14} className="text-slate-500" /> {cplDelta < 0 ? "Mejora en CPL" : "CPL del período"}</div>
-          <div className="font-serif text-4xl text-[#002855] mb-2">{cplDelta > 0 ? "+" : ""}{cplDelta.toFixed(0)}%</div>
-          <div className="text-sm text-slate-600">{fmtCurrDec(meta.monthOverMonth.prior.cpl)} → {fmtCurrDec(meta.monthOverMonth.current.cpl)}</div>
+        <div className={`bg-white border border-slate-200 border-l-4 ${cpMsgDelta < 0 ? "border-l-green-600" : "border-l-amber-600"} rounded-lg p-6`}>
+          <div className="text-xs text-slate-600 uppercase tracking-widest font-semibold mb-2 flex items-center gap-1.5"><Award size={14} className="text-slate-500" /> {cpMsgDelta < 0 ? "Mejora en Costo/Conv" : "Costo/Conv del período"}</div>
+          <div className="font-serif text-4xl text-[#002855] mb-2">{cpMsgDelta > 0 ? "+" : ""}{cpMsgDelta.toFixed(0)}%</div>
+          <div className="text-sm text-slate-600">{fmtCurr(meta.monthOverMonth.prior.cpMessage)} → {fmtCurr(meta.monthOverMonth.current.cpMessage)}</div>
         </div>
       </div>
     </div>
   );
 }
 
-function SectionTendencias({ meta, t, cmp, cplChange }: { meta: MetaData; t: MetaData["totals30d"]; cmp: MetaData["last7vsPrev7"]; cplChange: number }) {
+function SectionTendencias({ meta, t, cmp }: { meta: MetaData; t: MetaData["totals30d"]; cmp: MetaData["last7vsPrev7"]; cplChange: number }) {
   const trendRef = useRef<HTMLCanvasElement>(null);
   const reachRef = useRef<HTMLCanvasElement>(null);
+  const cpMsgChange = cmp.cpMessage_prev > 0 ? ((cmp.cpMessage_now - cmp.cpMessage_prev) / cmp.cpMessage_prev) * 100 : 0;
 
   useEffect(() => {
     if (!trendRef.current || !reachRef.current) return;
@@ -756,7 +1006,7 @@ function SectionTendencias({ meta, t, cmp, cplChange }: { meta: MetaData; t: Met
         type: "line",
         data: { labels: meta.daily.map(x => x.date.slice(5)), datasets: [
           { label: "Inversión", data: meta.daily.map(x => x.spend), borderColor: "#002855", backgroundColor: "rgba(12,16,21,0.05)", fill: true, tension: 0.32, yAxisID: "y", pointRadius: 0, borderWidth: 2 },
-          { label: "Leads", data: meta.daily.map(x => x.leads), borderColor: "#2A6FBC", fill: false, tension: 0.32, yAxisID: "y1", pointRadius: 3, borderWidth: 2 },
+          { label: "Conversaciones", data: meta.daily.map(x => x.messages), borderColor: "#2A6FBC", fill: false, tension: 0.32, yAxisID: "y1", pointRadius: 3, borderWidth: 2 },
         ]},
         options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
           plugins: { legend: { display: false }, tooltip: { backgroundColor: "#002855" } },
@@ -778,13 +1028,13 @@ function SectionTendencias({ meta, t, cmp, cplChange }: { meta: MetaData; t: Met
       <div className="grid grid-cols-5 max-md:grid-cols-2 gap-3">
         <KPI label="Inversión" value={fmtCurr(t.spend)} sub={`últimos ${meta.rangeDays}d`} />
         <KPI label="Impresiones" value={fmtNum(t.impressions)} delta={cmp.impressions.pct} />
-        <KPI label="Formularios" value={fmtNum(t.leads)} delta={cmp.leads.pct} />
-        <KPI label="CPL" value={fmtCurrDec(t.cpl)} delta={cplChange} lowerBetter />
+        <KPI label="Conversaciones" value={fmtNum(t.messages)} delta={cmp.messages.pct} />
+        <KPI label="Costo/Conv" value={fmtCurr(t.cpMessage)} delta={cpMsgChange} lowerBetter />
         <KPI label="CTR" value={fmtPct(t.ctr)} sub={fmtNum(t.clicks) + " clicks"} />
       </div>
 
       <div className="bg-white border border-slate-200 rounded-lg p-6">
-        <h3 className="font-serif text-lg mb-4">Inversión + Leads por día</h3>
+        <h3 className="font-serif text-lg mb-4">Inversión + Conversaciones por día</h3>
         <div className="relative h-72"><canvas ref={trendRef}></canvas></div>
       </div>
 
@@ -798,8 +1048,8 @@ function SectionTendencias({ meta, t, cmp, cplChange }: { meta: MetaData; t: Met
         {[
           { lbl: "Inversión", cur: fmtCurr(meta.monthOverMonth.current.spend), prev: fmtCurr(meta.monthOverMonth.prior.spend), delta: meta.monthOverMonth.deltas.spend, lowerBetter: false, neutral: true },
           { lbl: "Impresiones", cur: fmtNum(meta.monthOverMonth.current.impressions), prev: fmtNum(meta.monthOverMonth.prior.impressions), delta: meta.monthOverMonth.deltas.impressions, lowerBetter: false },
-          { lbl: "Formularios", cur: fmtNum(meta.monthOverMonth.current.leads), prev: fmtNum(meta.monthOverMonth.prior.leads), delta: meta.monthOverMonth.deltas.leads, lowerBetter: false },
-          { lbl: "CPL", cur: fmtCurrDec(meta.monthOverMonth.current.cpl), prev: fmtCurrDec(meta.monthOverMonth.prior.cpl), delta: meta.monthOverMonth.deltas.cpl, lowerBetter: true },
+          { lbl: "Conversaciones", cur: fmtNum(meta.monthOverMonth.current.messages), prev: fmtNum(meta.monthOverMonth.prior.messages), delta: meta.monthOverMonth.deltas.messages, lowerBetter: false },
+          { lbl: "Costo/Conv", cur: fmtCurr(meta.monthOverMonth.current.cpMessage), prev: fmtCurr(meta.monthOverMonth.prior.cpMessage), delta: meta.monthOverMonth.deltas.cpMessage, lowerBetter: true },
         ].map((m, i) => {
           const cls = m.neutral ? "text-slate-400" : m.delta > 0 ? (m.lowerBetter ? "text-red-600" : "text-green-600") : m.delta < 0 ? (m.lowerBetter ? "text-green-600" : "text-red-600") : "text-slate-400";
           const arrow = m.delta > 0 ? "▲" : m.delta < 0 ? "▼" : "■";
@@ -848,6 +1098,19 @@ function SectionRecomendaciones({ meta, isCrisis, cplChange, cmp }: { meta: Meta
     });
   }
 
+  // Audience insight: detect city-to-city vs local mismatch
+  const cityToCity = meta.adsets.find(a => /city.to.city|intercity|intermunic/i.test(a.name));
+  const localAud = meta.adsets.find(a => /local|intracity|intra.city|broad/i.test(a.name) && !/city.to.city/i.test(a.name));
+  if (cityToCity && (cityToCity.messages ?? 0) > 0) {
+    recos.push({
+      priority: "med",
+      title: "Probar audiencia local (mudanzas intra-ciudad)",
+      rationale: `"${cityToCity.name}" está generando ${cityToCity.messages} conversaciones${cityToCity.cpm_msg ? ` a ${fmtCurr(cityToCity.cpm_msg)} c/u` : ""}. Sin embargo, la mayoría de los clientes reales hacen mudanzas dentro de Bogotá (de un sector a otro), no entre ciudades. Hay un gap entre el targeting actual y la demanda real.${localAud ? ` La audiencia "${localAud.name}" (más cercana a local) tiene ${localAud.messages} conversaciones.` : ""}`,
+      action: "Crear un nuevo ad set con audiencia hyper-local de Bogotá (sectores premium: Chicó, Usaquén, Chapinero, Rosales) + creativo que mencione explícitamente \"mudanza dentro de Bogotá\" o \"de un sector a otro\". Mantener el ad set city-to-city en paralelo.",
+      impact: "Si la hipótesis se confirma, el costo por conversación intra-ciudad debería ser igual o menor al city-to-city, con mayor volumen total porque el TAM local es más grande que el inter-ciudad.",
+    });
+  }
+
   // Compute "Next Step" — most urgent single action
   const nextStep = recos[0];
 
@@ -873,7 +1136,7 @@ function SectionRecomendaciones({ meta, isCrisis, cplChange, cmp }: { meta: Meta
             <AlertTriangle size={24} className="flex-shrink-0 mt-0.5 text-amber-600" />
             <div>
               <h3 className="font-serif text-lg mb-1 text-amber-800">Estamos viendo señales de fatiga creativa</h3>
-              <p className="text-sm text-slate-700">Esta semana el CPL ha subido <strong>{cplChange.toFixed(0)}%</strong> ({fmtCurrDec(cmp.cpl_prev)} → {fmtCurrDec(cmp.cpl_now)}). Es parte normal del ciclo de vida de una campaña madura. Las recomendaciones de abajo están diseñadas para revertir esta tendencia.</p>
+              <p className="text-sm text-slate-700">Esta semana el costo por conversación de WhatsApp ha subido <strong>{cplChange.toFixed(0)}%</strong> ({fmtCurr(cmp.cpMessage_prev)} → {fmtCurr(cmp.cpMessage_now)}). Es parte normal del ciclo de vida de una campaña madura. Las recomendaciones de abajo están diseñadas para revertir esta tendencia.</p>
             </div>
           </div>
         </div>
@@ -1073,10 +1336,10 @@ function MiniWin({ title, Icon, data, metric = "leads" }: { title: string; Icon:
 type Snapshot = {
   savedAt: string;
   campaignStatuses: CampaignStatus[];
-  adsets: { name: string; spend: number; leads: number; cpl: number | null }[];
-  cpl: number;
-  leads: number;
-  leadsToday: number;
+  adsets: { name: string; spend: number; messages: number; cpm_msg: number | null }[];
+  cpMessage: number;
+  messages: number;
+  messagesToday: number;
 };
 
 function computeDiff(prev: Snapshot, curr: MetaData): { icon: string; text: string }[] {
@@ -1116,24 +1379,24 @@ function computeDiff(prev: Snapshot, curr: MetaData): { icon: string; text: stri
     out.push({ icon: "✨", text: `${newAdsetCount} ad set${newAdsetCount > 1 ? "s nuevos lanzados" : " nuevo lanzado"} desde la última visita` });
   }
 
-  // CPL movement (only if significant)
-  if (prev.cpl && curr.totals30d.cpl) {
-    const pctChange = ((curr.totals30d.cpl - prev.cpl) / prev.cpl) * 100;
+  // Cost per message movement (only if significant)
+  if (prev.cpMessage && curr.totals30d.cpMessage) {
+    const pctChange = ((curr.totals30d.cpMessage - prev.cpMessage) / prev.cpMessage) * 100;
     if (Math.abs(pctChange) >= 5) {
       const better = pctChange < 0;
       out.push({
         icon: better ? "📉" : "📈",
-        text: `CPL ${better ? "mejoró" : "subió"} ${Math.abs(pctChange).toFixed(0)}% (${fmtCurrDec(prev.cpl)} → ${fmtCurrDec(curr.totals30d.cpl)})`,
+        text: `Costo por conversación ${better ? "mejoró" : "subió"} ${Math.abs(pctChange).toFixed(0)}% (${fmtCurr(prev.cpMessage)} → ${fmtCurr(curr.totals30d.cpMessage)})`,
       });
     }
   }
 
-  // Lead change
-  const leadDiff = curr.totals30d.leads - prev.leads;
-  if (Math.abs(leadDiff) >= 1) {
+  // Message change
+  const msgDiff = curr.totals30d.messages - prev.messages;
+  if (Math.abs(msgDiff) >= 1) {
     out.push({
-      icon: leadDiff > 0 ? "📈" : "📉",
-      text: `${leadDiff > 0 ? "+" : ""}${leadDiff} formularios desde la última visita (total ${curr.totals30d.leads})`,
+      icon: msgDiff > 0 ? "📈" : "📉",
+      text: `${msgDiff > 0 ? "+" : ""}${msgDiff} conversaciones de WhatsApp desde la última visita (total ${curr.totals30d.messages})`,
     });
   }
 

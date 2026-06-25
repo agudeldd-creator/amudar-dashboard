@@ -104,9 +104,9 @@ export async function GET(req: Request) {
         fields: "campaign,account_id,spend",
         date_preset: "last_7d",
       }),
-      // Daily leads broken down by campaign (last 14 days only — enough to show 2 weeks)
+      // Daily WhatsApp conversations broken down by campaign (last 14 days)
       windsor({
-        fields: "date,campaign,account_id,actions_lead,spend",
+        fields: "date,campaign,account_id,actions_lead,actions_onsite_conversion_messaging_conversation_started_7d,spend",
         date_preset: "last_14dT",
       }),
       // Campaign status + start time (for active/paused/learning detection)
@@ -325,21 +325,22 @@ export async function GET(req: Request) {
       cpl: num(r.actions_lead) > 0 ? num(r.spend) / num(r.actions_lead) : null,
     }));
 
-    // === Daily leads by active campaign (last 14 days) for "Leads Diarios" table ===
+    // === Daily WhatsApp conversations by active campaign (last 14 days) ===
+    // For Amudar this is the primary daily metric — form leads kept for reference only.
     const dailyByCampaignFiltered = filterClosets(dailyByCampaignRaw).filter((r) =>
       isActive(String(r.campaign || ""))
     );
-    const dailyByCampaignMap: Record<string, Record<string, number>> = {};
+    const dailyMessagesMap: Record<string, Record<string, number>> = {};
     const activeCampaignNames = new Set<string>();
     for (const r of dailyByCampaignFiltered) {
       const date = String(r.date || "");
       const camp = String(r.campaign || "");
       if (!date || !camp) continue;
       activeCampaignNames.add(camp);
-      if (!dailyByCampaignMap[date]) dailyByCampaignMap[date] = {};
-      dailyByCampaignMap[date][camp] = (dailyByCampaignMap[date][camp] || 0) + num(r.actions_lead);
+      if (!dailyMessagesMap[date]) dailyMessagesMap[date] = {};
+      dailyMessagesMap[date][camp] = (dailyMessagesMap[date][camp] || 0) + num(r[MSG_FIELD]);
     }
-    const dailyLeadsByCampaign = Object.entries(dailyByCampaignMap)
+    const dailyMessagesByCampaign = Object.entries(dailyMessagesMap)
       .map(([date, byCamp]) => ({
         date,
         total: Object.values(byCamp).reduce((s, n) => s + n, 0),
@@ -349,8 +350,8 @@ export async function GET(req: Request) {
 
     const todayStr = new Date().toISOString().slice(0, 10);
     const yesterdayStr = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-    const leadsToday = dailyLeadsByCampaign.find((d) => d.date === todayStr)?.total || 0;
-    const leadsYesterday = dailyLeadsByCampaign.find((d) => d.date === yesterdayStr)?.total || 0;
+    const messagesToday = dailyMessagesByCampaign.find((d) => d.date === todayStr)?.total || 0;
+    const messagesYesterday = dailyMessagesByCampaign.find((d) => d.date === yesterdayStr)?.total || 0;
 
     // === Compute aggregates ===
     const total30d = daily.reduce<{ spend: number; impressions: number; reach_daily_sum: number; clicks: number; leads: number; messages: number; replies: number }>(
@@ -676,9 +677,9 @@ export async function GET(req: Request) {
       topAds,
       activeCampaigns: Array.from(activeCampaignNames).sort(),
       campaignStatuses,
-      dailyLeadsByCampaign,
-      leadsToday,
-      leadsYesterday,
+      dailyMessagesByCampaign,
+      messagesToday,
+      messagesYesterday,
       creativeRefresh: {
         recentAdsCount: recentAds.length,
         newestAdDays: newestAdAge,
