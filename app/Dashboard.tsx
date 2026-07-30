@@ -105,6 +105,20 @@ type CampaignStatus = {
 };
 
 
+type TrendsData = {
+  lastUpdated: string;
+  geo: string;
+  timeframe: string;
+  series: {
+    keyword: string;
+    points: { date: string; value: number }[];
+    latestValue: number;
+    peak: number;
+    peakDate: string;
+  }[];
+  cached?: boolean;
+} | { error: string; blocked?: boolean; keywords_tried?: string[] };
+
 type GoogleData = {
   platform: "google";
   lastUpdated: string;
@@ -189,6 +203,7 @@ export default function Dashboard() {
   const [activeSection, setActiveSection] = useState<Section>("resumen");
   const [platform, setPlatform] = useState<"meta" | "google">("meta");
   const [googleData, setGoogleData] = useState<GoogleData | null>(null);
+  const [trendsData, setTrendsData] = useState<TrendsData | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [changes, setChanges] = useState<{ icon: string; text: string }[]>([]);
   const [lastVisitText, setLastVisitText] = useState<string>("");
@@ -212,6 +227,15 @@ export default function Dashboard() {
       .then((g) => { if (!g.error) setGoogleData(g); })
       .catch(() => {});
   }, [unlocked, platform, rangeDays, googleData]);
+
+  // Lazy-load Google Trends when Meta+Crecimiento is active. Cached 24h server-side.
+  useEffect(() => {
+    if (!unlocked || platform !== "meta" || activeSection !== "crecimiento" || trendsData) return;
+    fetch(`/api/trends`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((t: TrendsData) => setTrendsData(t))
+      .catch(() => {});
+  }, [unlocked, platform, activeSection, trendsData]);
 
   async function loadAll(isRefresh = false, range: 30 | 60 | 90 = rangeDays) {
     if (isRefresh) setRefreshing(true);
@@ -429,7 +453,7 @@ export default function Dashboard() {
           <>
             {activeSection === "resumen" && <SectionResumen meta={meta} cmp={cmp} cplChange={cplChange} isCrisis={isCrisis} />}
             {activeSection === "conversaciones" && <SectionLeads meta={meta} />}
-            {activeSection === "crecimiento" && <SectionCrecimiento meta={meta} />}
+            {activeSection === "crecimiento" && <SectionCrecimiento meta={meta} trendsData={trendsData} />}
             {activeSection === "campanas" && <SectionCampanas meta={meta} />}
             {activeSection === "logros" && <SectionLogros meta={meta} />}
             {activeSection === "tendencias" && <SectionTendencias meta={meta} t={t} cmp={cmp} cplChange={cplChange} />}
@@ -567,7 +591,7 @@ function DailyTrendLineChart({ daily }: { daily: MetaData["daily"] }) {
   );
 }
 
-function SectionCrecimiento({ meta }: { meta: MetaData }) {
+function SectionCrecimiento({ meta, trendsData }: { meta: MetaData; trendsData: TrendsData | null }) {
   const t = meta.totals30d;
   const wow = meta.weekOverWeek;
   const periodMsgDelta = meta.monthOverMonth.deltas.messages;
@@ -677,6 +701,126 @@ function SectionCrecimiento({ meta }: { meta: MetaData }) {
           <div className="font-serif text-2xl">{periodMsgDelta > 0 ? "+" : ""}{periodMsgDelta.toFixed(0)}% vs período anterior</div>
         </div>
       </div>
+
+      {/* Google Trends — contexto de mercado */}
+      <MarketContextCard trendsData={trendsData} weekOverWeek={meta.weekOverWeek} />
+    </div>
+  );
+}
+
+function MarketContextCard({ trendsData, weekOverWeek }: { trendsData: TrendsData | null; weekOverWeek: MetaData["weekOverWeek"] }) {
+  // Loading state
+  if (!trendsData) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-lg p-6">
+        <h3 className="font-serif text-lg text-[#002855] mb-1">Contexto de mercado · Google Trends</h3>
+        <p className="text-sm text-slate-500">Cargando data del interés de búsqueda en Bogotá…</p>
+      </div>
+    );
+  }
+
+  // Error / not-connected state
+  if ("error" in trendsData) {
+    return (
+      <div className="bg-amber-50 border border-amber-200 border-l-4 border-l-amber-500 rounded-lg p-6">
+        <h3 className="font-serif text-lg text-amber-900 mb-2 flex items-center gap-2">
+          <TrendingUp size={18} /> Contexto de mercado · Google Trends (no conectado)
+        </h3>
+        <p className="text-sm text-slate-700 mb-3">
+          Google Trends bloqueó el acceso automático (rate limit / bot detection). Es normal desde entornos como Vercel.
+        </p>
+        <div className="bg-white rounded p-4 text-sm">
+          <div className="font-semibold text-[#002855] mb-2">Opciones para conectar data real de mercado:</div>
+          <ul className="space-y-2 text-slate-700 text-[13px]">
+            <li>• <strong>DataForSEO API</strong> (~$1-3/mes): API estable, se conecta al backend y actualiza automático. <em>Requiere crear cuenta y API key.</em></li>
+            <li>• <strong>Google Search Console</strong> (gratis): conecta a-mudar.com en Windsor → data real de búsquedas al sitio. <em>Requiere acceso admin al Search Console.</em></li>
+            <li>• <strong>Import CSV manual</strong> (gratis): descarga CSV mensual de <code>trends.google.com</code> y lo subimos al repo. 5 min/mes.</li>
+          </ul>
+        </div>
+        <p className="text-[11px] text-slate-500 mt-3">
+          Mientras tanto: puedes citarle al cliente el link directo <code className="bg-white px-1 rounded">trends.google.com/trends/explore?geo=CO-DC&q=mudanzas</code> — es la fuente que respalda el argumento de estacionalidad.
+        </p>
+      </div>
+    );
+  }
+
+  // Success state — show line chart + insight
+  const primary = trendsData.series[0];
+  if (!primary || primary.points.length === 0) {
+    return null;
+  }
+  const points = primary.points;
+  const max = Math.max(...points.map(p => p.value), 1);
+  const w = 100, h = 100;
+  const step = w / Math.max(points.length - 1, 1);
+  const polyPoints = points.map((p, i) => `${(i * step).toFixed(2)},${(h - (p.value / max) * h * 0.85).toFixed(2)}`).join(" ");
+  const areaPoints = `0,${h} ${polyPoints} ${w},${h}`;
+
+  // Compute market change: last 7d avg vs prev 7d avg
+  const last7 = points.slice(-7);
+  const prev7 = points.slice(-14, -7);
+  const avg = (arr: typeof points) => arr.length > 0 ? arr.reduce((s, p) => s + p.value, 0) / arr.length : 0;
+  const marketChange = prev7.length > 0 ? ((avg(last7) - avg(prev7)) / avg(prev7)) * 100 : 0;
+  const amudarChange = weekOverWeek.growthPct;
+  const outperform = amudarChange - marketChange;
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-6">
+      <div className="flex items-start justify-between mb-4 flex-wrap gap-2">
+        <div>
+          <h3 className="font-serif text-lg text-[#002855] mb-1 flex items-center gap-2">
+            <TrendingUp size={18} /> Contexto de mercado · Google Trends
+          </h3>
+          <p className="text-xs text-slate-500">Interés de búsqueda por &ldquo;{primary.keyword}&rdquo; en Bogotá · últimos 90 días</p>
+        </div>
+        <div className={`px-3 py-1.5 rounded-full text-xs font-semibold ${outperform > 0 ? "text-green-700 bg-green-50" : outperform < 0 ? "text-red-700 bg-red-50" : "text-slate-700 bg-slate-50"}`}>
+          {outperform > 0 ? "✓ Superando el mercado" : outperform < 0 ? "Debajo del mercado" : "En línea con el mercado"}
+        </div>
+      </div>
+
+      <div className="relative mb-4" style={{ height: 200 }}>
+        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-full">
+          <defs>
+            <linearGradient id="trendsFill" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="#7BA7DC" stopOpacity="0.4" />
+              <stop offset="100%" stopColor="#7BA7DC" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <polygon points={areaPoints} fill="url(#trendsFill)" />
+          <polyline points={polyPoints} fill="none" stroke="#002855" strokeWidth="0.6" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+        </svg>
+      </div>
+
+      <div className="grid grid-cols-3 max-md:grid-cols-1 gap-3 mb-4">
+        <div className="bg-slate-50 border border-slate-200 rounded p-3">
+          <div className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Interés semana actual</div>
+          <div className="font-serif text-2xl text-[#002855]">{avg(last7).toFixed(0)}/100</div>
+          <div className="text-xs text-slate-600">{marketChange > 0 ? "+" : ""}{marketChange.toFixed(0)}% vs semana previa</div>
+        </div>
+        <div className="bg-slate-50 border border-slate-200 rounded p-3">
+          <div className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Pico del período</div>
+          <div className="font-serif text-2xl text-[#002855]">{primary.peak}/100</div>
+          <div className="text-xs text-slate-600">el {new Date(primary.peakDate).toLocaleDateString("es-CO", { day: "2-digit", month: "short" })}</div>
+        </div>
+        <div className="bg-slate-50 border border-slate-200 rounded p-3">
+          <div className="text-[10px] uppercase tracking-widest text-slate-500 font-semibold">Tus conversaciones WoW</div>
+          <div className="font-serif text-2xl text-[#002855]">{amudarChange > 0 ? "+" : ""}{amudarChange.toFixed(0)}%</div>
+          <div className="text-xs text-slate-600">vs {marketChange > 0 ? "+" : ""}{marketChange.toFixed(0)}% del mercado</div>
+        </div>
+      </div>
+
+      <div className={`rounded p-4 text-sm ${outperform > 0 ? "bg-green-50 border border-green-200" : outperform < -5 ? "bg-amber-50 border border-amber-200" : "bg-slate-50 border border-slate-200"}`}>
+        <strong className={outperform > 0 ? "text-green-800" : outperform < -5 ? "text-amber-800" : "text-slate-700"}>Insight:</strong>{" "}
+        {outperform > 0
+          ? `El interés general por mudanzas en Bogotá ${marketChange >= 0 ? "creció" : "bajó"} ${Math.abs(marketChange).toFixed(0)}% esta semana. Amudar ${amudarChange >= 0 ? "creció" : "bajó"} ${Math.abs(amudarChange).toFixed(0)}%. Estás ${outperform.toFixed(0)} puntos por encima del comportamiento del mercado.`
+          : outperform < -5
+          ? `El mercado ${marketChange >= 0 ? "creció" : "bajó"} ${Math.abs(marketChange).toFixed(0)}% pero Amudar ${amudarChange >= 0 ? "creció solo" : "bajó"} ${Math.abs(amudarChange).toFixed(0)}%. Estás ${Math.abs(outperform).toFixed(0)} puntos por debajo — vale la pena revisar creativos o audiencia.`
+          : `Amudar se está moviendo en línea con el mercado (mercado ${marketChange >= 0 ? "+" : ""}${marketChange.toFixed(0)}%, Amudar ${amudarChange >= 0 ? "+" : ""}${amudarChange.toFixed(0)}%).`}
+      </div>
+
+      <p className="text-[10px] text-slate-400 mt-3">
+        Fuente: Google Trends (interés relativo 0-100, Bogotá D.C.) · Actualizado {new Date(trendsData.lastUpdated).toLocaleDateString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} · Cache 24h
+      </p>
     </div>
   );
 }
